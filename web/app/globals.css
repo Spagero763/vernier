@@ -1,0 +1,196 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+html,
+body {
+  background: #05060b;
+  color: #e7e9ee;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(94, 234, 212, 0.25);
+}
+
+/* ambient background: two drifting light fields behind everything */
+.bg-fx {
+  position: fixed;
+  inset: 0;
+  z-index: -10;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.bg-fx::before,
+.bg-fx::after {
+  content: "";
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+}
+
+.bg-fx::before {
+  width: 46rem;
+  height: 34rem;
+  top: -12rem;
+  right: -10rem;
+  background: radial-gradient(closest-side, rgba(139, 139, 247, 0.26), transparent);
+  animation: drift-a 26s ease-in-out infinite alternate;
+}
+
+.bg-fx::after {
+  width: 42rem;
+  height: 32rem;
+  top: 2rem;
+  left: -12rem;
+  background: radial-gradient(closest-side, rgba(94, 234, 212, 0.2), transparent);
+  animation: drift-b 32s ease-in-out infinite alternate;
+}
+
+@keyframes drift-a {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-6rem, 4rem, 0);
+  }
+}
+
+@keyframes drift-b {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(5rem, -3rem, 0);
+  }
+}
+
+.bg-grid {
+  position: fixed;
+  inset: 0;
+  z-index: -10;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 52px 52px;
+  mask-image: radial-gradient(72rem 46rem at 50% -8rem, black, transparent 75%);
+  -webkit-mask-image: radial-gradient(72rem 46rem at 50% -8rem, black, transparent 75%);
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1.25rem;
+  backdrop-filter: blur(12px);
+  transition: border-color 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.card-hover:hover {
+  border-color: rgba(94, 234, 212, 0.35);
+  transform: translateY(-2px);
+  box-shadow: 0 16px 44px -20px rgba(94, 234, 212, 0.28);
+}
+
+/* gradient border for the headline stat */
+.card-hero {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(rgba(10, 12, 19, 0.92), rgba(10, 12, 19, 0.92)) padding-box,
+    linear-gradient(120deg, rgba(94, 234, 212, 0.5), rgba(139, 139, 247, 0.5)) border-box;
+}
+
+.grad-text {
+  background: linear-gradient(90deg, #5eead4, #8b8bf7, #5eead4);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: sheen 9s linear infinite;
+}
+
+@keyframes sheen {
+  to {
+    background-position: 200% center;
+  }
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0.7rem 1.1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: rgba(94, 234, 212, 0.5);
+  background: rgba(94, 234, 212, 0.06);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: linear-gradient(90deg, rgba(94, 234, 212, 0.2), rgba(139, 139, 247, 0.2));
+  border-color: rgba(94, 234, 212, 0.4);
+  box-shadow: 0 0 28px -10px rgba(94, 234, 212, 0.45);
+}
+
+.btn-primary:hover:not(:disabled) {
+  border-color: rgba(94, 234, 212, 0.7);
+  background: linear-gradient(90deg, rgba(94, 234, 212, 0.28), rgba(139, 139, 247, 0.28));
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 9999px;
+  border: 1px solid rgba(94, 234, 212, 0.25);
+  background: rgba(94, 234, 212, 0.06);
+  padding: 0.35rem 0.9rem;
+  font-size: 0.8rem;
+  color: rgba(231, 233, 238, 0.75);
+}
+
+.dot-live {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: #5eead4;
+  animation: dot-pulse 2s ease-out infinite;
+}
+
+@keyframes dot-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(94, 234, 212, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 0.55rem rgba(94, 234, 212, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(94, 234, 212, 0);
+  }
+}
