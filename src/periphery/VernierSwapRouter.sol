@@ -10,7 +10,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
 import {TransientStateLibrary} from "v4-core/src/libraries/TransientStateLibrary.sol";
 
-contract CarrySwapRouter is IUnlockCallback {
+contract VernierSwapRouter is IUnlockCallback {
     using CurrencySettler for Currency;
     using TransientStateLibrary for IPoolManager;
 

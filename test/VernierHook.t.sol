@@ -14,7 +14,7 @@ import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
-import {CarryHook} from "../src/CarryHook.sol";
+import {VernierHook} from "../src/VernierHook.sol";
 import {ERC4626RateSource} from "../src/adapters/ERC4626RateSource.sol";
 import {StETHRateSource} from "../src/adapters/StETHRateSource.sol";
 import {IRateSource} from "../src/interfaces/IRateSource.sol";
@@ -22,10 +22,10 @@ import {MockYieldVault} from "./mocks/MockYieldVault.sol";
 import {MockStETH} from "./mocks/MockStETH.sol";
 import {ToggleRateSource} from "./mocks/ToggleRateSource.sol";
 
-contract CarryHookTest is Test, Deployers {
+contract VernierHookTest is Test, Deployers {
     using StateLibrary for IPoolManager;
 
-    CarryHook internal hook;
+    VernierHook internal hook;
     MockYieldVault internal vault;
     ERC4626RateSource internal source;
     PoolKey internal poolKey;
@@ -44,8 +44,8 @@ contract CarryHookTest is Test, Deployers {
         uint160 flags =
             uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG);
         (address hookAddr, bytes32 salt) =
-            HookMiner.find(address(this), flags, type(CarryHook).creationCode, abi.encode(address(manager)));
-        hook = new CarryHook{salt: salt}(IPoolManager(address(manager)));
+            HookMiner.find(address(this), flags, type(VernierHook).creationCode, abi.encode(address(manager)));
+        hook = new VernierHook{salt: salt}(IPoolManager(address(manager)));
         require(address(hook) == hookAddr, "hook address mismatch");
 
         (poolKey, poolId) =
@@ -63,7 +63,7 @@ contract CarryHookTest is Test, Deployers {
     }
 
     function test_configure_revertsOnSecondCall() public {
-        vm.expectRevert(CarryHook.PoolAlreadyConfigured.selector);
+        vm.expectRevert(VernierHook.PoolAlreadyConfigured.selector);
         hook.configurePool(poolKey, IRateSource(address(source)), MAX_FEE, MAX_JUMP, true);
     }
 

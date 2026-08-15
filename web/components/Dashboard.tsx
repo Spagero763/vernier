@@ -171,7 +171,7 @@ export function Dashboard() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Logo className="h-9 w-9" />
-            <span className="text-lg font-semibold tracking-tight">Carry</span>
+            <span className="text-lg font-semibold tracking-tight">Vernier</span>
           </div>
           {isConnected ? (
             <div className="flex items-center gap-2">
@@ -217,7 +217,7 @@ export function Dashboard() {
           The liquidity venue for <span className="grad-text">yield-bearing assets</span>
         </motion.h1>
         <motion.p variants={fadeUp} className="mx-auto mt-4 max-w-2xl text-white/60">
-          Carry reads each token&apos;s on-chain yield rate and prices it in real time, so the yield stays with
+          Vernier reads each token&apos;s on-chain yield rate and prices it in real time, so the yield stays with
           liquidity providers instead of leaking to arbitrage bots.
         </motion.p>
         <motion.div variants={fadeUp} className="mt-7 flex justify-center gap-3">
@@ -334,7 +334,7 @@ export function Dashboard() {
         viewport={{ once: true, margin: "-40px" }}
         className="mt-8 grid gap-3 text-sm sm:grid-cols-2"
       >
-        <Addr label="CarryHook" addr={ADDR.hook} />
+        <Addr label="VernierHook" addr={ADDR.hook} />
         <Addr label="Pool manager" addr={ADDR.poolManager} />
         <Addr label="Yield token (sYIELD)" addr={ADDR.syield} />
         <Addr label="Rate source" addr={ADDR.rateSource} />

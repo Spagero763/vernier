@@ -11,7 +11,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
-import {CarryHook} from "../src/CarryHook.sol";
+import {VernierHook} from "../src/VernierHook.sol";
 import {ERC4626RateSource} from "../src/adapters/ERC4626RateSource.sol";
 import {IRateSource} from "../src/interfaces/IRateSource.sol";
 import {MockYieldVault} from "../test/mocks/MockYieldVault.sol";
@@ -29,8 +29,8 @@ contract Deploy is Script {
         uint160 flags =
             uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG);
         (address hookAddr, bytes32 salt) =
-            HookMiner.find(CREATE2_DEPLOYER, flags, type(CarryHook).creationCode, abi.encode(poolManager));
-        CarryHook hook = new CarryHook{salt: salt}(IPoolManager(poolManager));
+            HookMiner.find(CREATE2_DEPLOYER, flags, type(VernierHook).creationCode, abi.encode(poolManager));
+        VernierHook hook = new VernierHook{salt: salt}(IPoolManager(poolManager));
         require(address(hook) == hookAddr, "hook address mismatch");
 
         MockERC20 usdc = new MockERC20("USD Coin", "USDC", 18);
@@ -56,7 +56,7 @@ contract Deploy is Script {
         vm.stopBroadcast();
 
         console.log("PoolManager :", poolManager);
-        console.log("CarryHook   :", address(hook));
+        console.log("VernierHook   :", address(hook));
         console.log("USDC        :", address(usdc));
         console.log("sYIELD      :", address(syield));
         console.log("Vault       :", address(vault));

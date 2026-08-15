@@ -1,8 +1,8 @@
-# Carry
+# Vernier
 
 **The Uniswap v4 liquidity venue for yield-bearing assets.**
 
-Carry is a set of Uniswap v4 pools and a hook purpose-built for yield-bearing tokens (liquid staking tokens, yield-bearing stablecoins, tokenized treasuries). It reads each token's on-chain yield rate and prices it in real time, so the yield those tokens accrue is captured by liquidity providers instead of leaking to arbitrage bots.
+Vernier is a set of Uniswap v4 pools and a hook purpose-built for yield-bearing tokens (liquid staking tokens, yield-bearing stablecoins, tokenized treasuries). It reads each token's on-chain yield rate and prices it in real time, so the yield those tokens accrue is captured by liquidity providers instead of leaking to arbitrage bots.
 
 ---
 
@@ -19,7 +19,7 @@ The fair price of a yield-bearing token is not a mystery. It is derivable from t
 - ERC-4626 vaults (sUSDe, sDAI, and most yield stables): `convertToAssets(1e18)`
 - Liquid staking tokens (stETH / wstETH): the pooled-ETH-per-share rate
 
-Carry's hook reads that rate inside `beforeSwap` and adjusts the pool's effective price to track the accrual, so there is no stale price left to arbitrage. The yield stays with the LPs who own the liquidity. No external price oracle is required: the yield-bearing token itself is the canonical, manipulation-resistant source of truth for its own value.
+Vernier's hook reads that rate inside `beforeSwap` and adjusts the pool's effective price to track the accrual, so there is no stale price left to arbitrage. The yield stays with the LPs who own the liquidity. No external price oracle is required: the yield-bearing token itself is the canonical, manipulation-resistant source of truth for its own value.
 
 ```
 Yield token accrues on-chain  ──►  hook reads token's own exchange rate  ──►  pool price tracks fair value
@@ -35,14 +35,14 @@ Yield token accrues on-chain  ──►  hook reads token's own exchange rate  �
 |---|---|
 | Generic AMM | Ignores it; LPs bleed the yield to bots every block |
 | General MEV / auction protocols | Treat the drift as an unknown price move; fight it with auctions after the fact |
-| **Carry** | **Knows the drift in advance from the token's own rate; prices it in so there is nothing to arbitrage** |
+| **Vernier** | **Knows the drift in advance from the token's own rate; prices it in so there is nothing to arbitrage** |
 
 For yield-bearing assets the fair price move is deterministic. A specialized venue that reads the token's rate can neutralize the arbitrage that generalized solutions can only tax after it happens.
 
 ## Why it is a venue, not just a hook
 
 - **A real, large market**: liquid staking tokens and yield-bearing stablecoins hold tens of billions in value. These are the assets institutions and treasuries actually hold.
-- **A clear business**: Carry runs the pools for these assets and earns a share of the volume; LPs earn their yield plus fees instead of donating the yield to arbitrage.
+- **A clear business**: Vernier runs the pools for these assets and earns a share of the volume; LPs earn their yield plus fees instead of donating the yield to arbitrage.
 - **A durable wedge**: per-asset pricing logic, integrations with each yield token, and the LP relationships that follow.
 
 ## Status
@@ -59,7 +59,7 @@ forge test
 ## Repository layout
 
 ```
-carry/
+vernier/
 ├── README.md
 ├── docs/
 │   ├── architecture.md      System design, components, data flow
@@ -68,7 +68,7 @@ carry/
 │   ├── deployments.md       Live addresses and reproduction steps
 │   └── roadmap.md           Build milestones
 ├── src/
-│   ├── CarryHook.sol        The hook: gap-priced, direction-aware fees
+│   ├── VernierHook.sol        The hook: gap-priced, direction-aware fees
 │   ├── base/                Minimal v4 hook base
 │   ├── adapters/            Rate sources (ERC-4626, stETH)
 │   ├── lib/                 Retention accounting

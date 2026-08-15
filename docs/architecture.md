@@ -1,6 +1,6 @@
 # Architecture
 
-Carry is a Uniswap v4 hook plus a small set of internal accounting libraries, deployed alongside curated pools for yield-bearing assets. Its core path has no off-chain components. Everything needed to price a swap against fair value and retain the yield for LPs happens synchronously inside the swap lifecycle.
+Vernier is a Uniswap v4 hook plus a small set of internal accounting libraries, deployed alongside curated pools for yield-bearing assets. Its core path has no off-chain components. Everything needed to price a swap against fair value and retain the yield for LPs happens synchronously inside the swap lifecycle.
 
 ## 1. System context
 
@@ -8,18 +8,18 @@ Carry is a Uniswap v4 hook plus a small set of internal accounting libraries, de
 flowchart LR
     Trader["Trader / arbitrageur"] -->|swap| PM["Uniswap v4\nPoolManager"]
     LP["Liquidity providers"] -->|add / remove liquidity| PM
-    PM <-->|hook callbacks| Carry["Carry Hook"]
-    Carry -->|reads exchange rate| Token["Yield-bearing token\n(ERC-4626 vault / LST)"]
-    Carry -->|yield retained| LP
+    PM <-->|hook callbacks| Vernier["Vernier Hook"]
+    Vernier -->|reads exchange rate| Token["Yield-bearing token\n(ERC-4626 vault / LST)"]
+    Vernier -->|yield retained| LP
 ```
 
-The only external contract Carry reads is the yield-bearing token itself, for its on-chain exchange rate. There is no price oracle, relayer, or keeper in the path.
+The only external contract Vernier reads is the yield-bearing token itself, for its on-chain exchange rate. There is no price oracle, relayer, or keeper in the path.
 
 ## 2. Component view
 
 ```mermaid
 flowchart TB
-    subgraph Hook["Carry Hook contract"]
+    subgraph Hook["Vernier Hook contract"]
         BS["beforeSwap()\nread par price, reconcile pool price, price the swap fairly"]
         AS["afterSwap()\nmeasure retained value, update accounting"]
         AL["afterAddLiquidity()\ntrack LP in-range exposure"]
@@ -58,7 +58,7 @@ The `RateReader` adapter pattern is deliberate: onboarding a new yield asset mea
 sequenceDiagram
     participant T as Trader
     participant PM as PoolManager
-    participant H as Carry Hook
+    participant H as Vernier Hook
     participant Y as Yield token
 
     T->>PM: swap
@@ -76,7 +76,7 @@ sequenceDiagram
 
 ## 4. Reward accounting
 
-Carry uses a reward-per-liquidity accumulator so payouts are O(1) per swap and per LP:
+Vernier uses a reward-per-liquidity accumulator so payouts are O(1) per swap and per LP:
 
 ```
 On retaining value V with total in-range liquidity L:
@@ -91,7 +91,7 @@ On remove / claim:
 
 ## 5. Trust and dependencies
 
-| Dependency | Carry uses it? |
+| Dependency | Vernier uses it? |
 |---|---|
 | External price oracle | No |
 | Off-chain auction / relayer | No |
@@ -102,6 +102,6 @@ On remove / claim:
 
 ## 6. Non-goals
 
-- Carry is not a permissionless listing venue for arbitrary tokens. It is a curated venue for vetted yield-bearing assets, which is safer and is part of the moat.
-- Carry does not try to predict market prices. It only reads the deterministic accrual a yield token publishes about itself.
-- Carry does not depend on any single chain feature beyond running as a v4 hook; it targets Unichain first for its liquidity and low fees.
+- Vernier is not a permissionless listing venue for arbitrary tokens. It is a curated venue for vetted yield-bearing assets, which is safer and is part of the moat.
+- Vernier does not try to predict market prices. It only reads the deterministic accrual a yield token publishes about itself.
+- Vernier does not depend on any single chain feature beyond running as a v4 hook; it targets Unichain first for its liquidity and low fees.

@@ -1,6 +1,6 @@
 # Roadmap
 
-Carry is built in layers, so there is a working, demoable system at the end of every stage and no stage depends on the next one existing.
+Vernier is built in layers, so there is a working, demoable system at the end of every stage and no stage depends on the next one existing.
 
 ## Stage 0: Foundations
 - Foundry project scaffolded on the Uniswap v4 template.
@@ -12,7 +12,7 @@ Carry is built in layers, so there is a working, demoable system at the end of e
 - `RateReader` adapter for ERC-4626 (`convertToAssets`) with safety bounds.
 - `ParPricing` computes fair price from the rate.
 - `beforeSwap` reconciles the pool price toward par so accrued yield is not left to arbitrage.
-- Full Foundry tests with a mock ERC-4626 vault whose rate we advance over time: prove the arbitrage gap that exists on a plain pool is removed on a Carry pool.
+- Full Foundry tests with a mock ERC-4626 vault whose rate we advance over time: prove the arbitrage gap that exists on a plain pool is removed on a Vernier pool.
 - Deployed to Unichain Sepolia with a public address.
 
 Deliverable: a pool where LPs keep the yield, demonstrated against a baseline.
@@ -28,7 +28,7 @@ Deliverable: a pool where LPs keep the yield, demonstrated against a baseline.
 - Tests across both asset types.
 
 ## Stage 4: Proof and presentation
-- Simulation harness: run a realistic accrual + trade sequence through a plain pool vs a Carry pool over simulated time, report cumulative LP uplift.
+- Simulation harness: run a realistic accrual + trade sequence through a plain pool vs a Vernier pool over simulated time, report cumulative LP uplift.
 - Dashboard: live view of yield retained for LPs vs leaked on a baseline pool.
 - Written results: measured LP uplift, gas overhead, and the business case.
 

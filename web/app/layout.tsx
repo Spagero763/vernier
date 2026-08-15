@@ -7,9 +7,9 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swa
 const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "Carry | The liquidity venue for yield-bearing assets",
+  title: "Vernier | The liquidity venue for yield-bearing assets",
   description:
-    "Carry reads each yield-bearing token's on-chain rate and prices it in real time, so accrued yield goes to liquidity providers instead of leaking to arbitrage.",
+    "Vernier reads each yield-bearing token's on-chain rate and prices it in real time, so accrued yield goes to liquidity providers instead of leaking to arbitrage.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -13,8 +13,8 @@ import {ModifyLiquidityParams, SwapParams} from "v4-core/src/types/PoolOperation
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
-import {CarryHook} from "../src/CarryHook.sol";
-import {CarrySwapRouter} from "../src/periphery/CarrySwapRouter.sol";
+import {VernierHook} from "../src/VernierHook.sol";
+import {VernierSwapRouter} from "../src/periphery/VernierSwapRouter.sol";
 import {MockYieldVault} from "../test/mocks/MockYieldVault.sol";
 
 contract Seed is Script {
@@ -32,15 +32,15 @@ contract Seed is Script {
 
     function run() external {
         address poolManager = vm.envOr("POOL_MANAGER", DEFAULT_POOL_MANAGER);
-        address hookAddr = vm.envOr("CARRY_HOOK", DEFAULT_HOOK);
-        address usdc = vm.envOr("CARRY_USDC", DEFAULT_USDC);
-        address syield = vm.envOr("CARRY_SYIELD", DEFAULT_SYIELD);
-        address vault = vm.envOr("CARRY_VAULT", DEFAULT_VAULT);
+        address hookAddr = vm.envOr("VERNIER_HOOK", DEFAULT_HOOK);
+        address usdc = vm.envOr("VERNIER_USDC", DEFAULT_USDC);
+        address syield = vm.envOr("VERNIER_SYIELD", DEFAULT_SYIELD);
+        address vault = vm.envOr("VERNIER_VAULT", DEFAULT_VAULT);
 
         vm.startBroadcast();
 
         PoolModifyLiquidityTest lpRouter = new PoolModifyLiquidityTest(IPoolManager(poolManager));
-        CarrySwapRouter swapRouter = new CarrySwapRouter(IPoolManager(poolManager));
+        VernierSwapRouter swapRouter = new VernierSwapRouter(IPoolManager(poolManager));
 
         MockERC20(usdc).mint(msg.sender, 1_000_000e18);
         MockERC20(syield).mint(msg.sender, 1_000_000e18);
@@ -80,7 +80,7 @@ contract Seed is Script {
 
         vm.stopBroadcast();
 
-        (,, uint256 totalRetained) = CarryHook(hookAddr).poolRetention(key.toId());
+        (,, uint256 totalRetained) = VernierHook(hookAddr).poolRetention(key.toId());
         console.log("lpRouter        :", address(lpRouter));
         console.log("swapRouter      :", address(swapRouter));
         console.log("total retained  :", totalRetained);

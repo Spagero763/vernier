@@ -13,18 +13,18 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 
-import {CarryHook} from "../src/CarryHook.sol";
+import {VernierHook} from "../src/VernierHook.sol";
 import {ERC4626RateSource} from "../src/adapters/ERC4626RateSource.sol";
 import {IRateSource} from "../src/interfaces/IRateSource.sol";
 import {MockYieldVault} from "./mocks/MockYieldVault.sol";
 
-contract CarrySimulationTest is Test, Deployers {
-    CarryHook internal hook;
+contract VernierSimulationTest is Test, Deployers {
+    VernierHook internal hook;
     MockYieldVault internal vault;
     ERC4626RateSource internal source;
 
     PoolKey internal basePool;
-    PoolKey internal carryPool;
+    PoolKey internal vernierPool;
 
     int24 internal constant TICK_LOWER = -6000;
     int24 internal constant TICK_UPPER = 6000;
@@ -45,44 +45,44 @@ contract CarrySimulationTest is Test, Deployers {
         uint160 flags =
             uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG);
         (address hookAddr, bytes32 salt) =
-            HookMiner.find(address(this), flags, type(CarryHook).creationCode, abi.encode(address(manager)));
-        hook = new CarryHook{salt: salt}(IPoolManager(address(manager)));
+            HookMiner.find(address(this), flags, type(VernierHook).creationCode, abi.encode(address(manager)));
+        hook = new VernierHook{salt: salt}(IPoolManager(address(manager)));
         require(address(hook) == hookAddr, "hook mismatch");
 
         (basePool,) = initPool(currency0, currency1, IHooks(address(0)), BASELINE_FEE, 60, SQRT_PRICE_1_1);
-        (carryPool,) =
+        (vernierPool,) =
             initPool(currency0, currency1, IHooks(address(hook)), LPFeeLibrary.DYNAMIC_FEE_FLAG, 60, SQRT_PRICE_1_1);
 
         _add(basePool, LIQUIDITY);
-        _add(carryPool, LIQUIDITY);
+        _add(vernierPool, LIQUIDITY);
 
-        hook.configurePool(carryPool, IRateSource(address(source)), 50_000, 100_000, true);
+        hook.configurePool(vernierPool, IRateSource(address(source)), 50_000, 100_000, true);
     }
 
-    function test_simulation_carryLpsKeepMore() public {
+    function test_simulation_vernierLpsKeepMore() public {
         for (uint16 i = 0; i < PERIODS; i++) {
             vault.accrue(ACCRUAL_PIPS);
             bool zeroForOne = (i % 2 == 0);
             swap(basePool, zeroForOne, -FLOW, "");
-            swap(carryPool, zeroForOne, -FLOW, "");
+            swap(vernierPool, zeroForOne, -FLOW, "");
         }
 
         uint256 par = vault.rate();
         uint256 baseValue = _lpValue(basePool, par);
-        uint256 carryValue = _lpValue(carryPool, par);
+        uint256 vernierValue = _lpValue(vernierPool, par);
 
-        uint256 upliftBps = ((carryValue - baseValue) * 10_000) / baseValue;
+        uint256 upliftBps = ((vernierValue - baseValue) * 10_000) / baseValue;
 
-        (,, uint256 totalRetained) = hook.poolRetention(carryPool.toId());
+        (,, uint256 totalRetained) = hook.poolRetention(vernierPool.toId());
 
         console.log("periods                :", PERIODS);
         console.log("final par (1e18)       :", par);
         console.log("baseline LP value      :", baseValue);
-        console.log("carry LP value         :", carryValue);
+        console.log("vernier LP value         :", vernierValue);
         console.log("uplift (bps)           :", upliftBps);
         console.log("yield retained for LPs :", totalRetained);
 
-        assertGt(carryValue, baseValue);
+        assertGt(vernierValue, baseValue);
         assertGt(totalRetained, 0);
     }
 

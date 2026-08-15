@@ -1,6 +1,6 @@
-# Carry web
+# Vernier web
 
-Live dashboard for the Carry hook on Unichain Sepolia. Reads pool retention straight from the deployed contracts and lets you accrue yield and trade to watch the retained-yield number climb.
+Live dashboard for the Vernier hook on Unichain Sepolia. Reads pool retention straight from the deployed contracts and lets you accrue yield and trade to watch the retained-yield number climb.
 
 ## Run
 
