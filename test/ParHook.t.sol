@@ -111,6 +111,80 @@ contract ParHookTest is Test, Deployers {
         assertGt(parValue, baseValue, "par-pool LPs should end up ahead");
     }
 
+    function test_claim_paysOutRetainedValue() public {
+        hook.setTrustedRouter(address(modifyLiquidityRouter), true);
+        _addAs(parPool, LIQUIDITY, bytes32(uint256(1)), address(this));
+
+        _runFlow(6);
+
+        (, uint256 pending1) = hook.pendingRetention(parPool.toId(), address(this), TICK_LOWER, TICK_UPPER, bytes32(uint256(1)));
+        assertGt(pending1, 0, "position should be owed part of the correction");
+
+        uint256 before = currency1.balanceOfSelf();
+        (, uint256 paid1) = hook.claim(parPool, TICK_LOWER, TICK_UPPER, bytes32(uint256(1)));
+
+        assertEq(paid1, pending1, "claim should pay exactly what was owed");
+        assertEq(currency1.balanceOfSelf() - before, paid1, "tokens should reach the LP");
+
+        (, uint256 afterPending) = hook.pendingRetention(parPool.toId(), address(this), TICK_LOWER, TICK_UPPER, bytes32(uint256(1)));
+        assertEq(afterPending, 0, "claim should zero the position");
+    }
+
+    function test_claim_splitsProportionallyToLiquidity() public {
+        hook.setTrustedRouter(address(modifyLiquidityRouter), true);
+        _addAs(parPool, LIQUIDITY, bytes32(uint256(1)), address(this));
+        _addAs(parPool, LIQUIDITY * 3, bytes32(uint256(2)), address(this));
+
+        _runFlow(6);
+
+        (, uint256 small) = hook.claim(parPool, TICK_LOWER, TICK_UPPER, bytes32(uint256(1)));
+        (, uint256 large) = hook.claim(parPool, TICK_LOWER, TICK_UPPER, bytes32(uint256(2)));
+
+        console.log("1x position claimed:", small);
+        console.log("3x position claimed:", large);
+
+        assertApproxEqRel(large, small * 3, 1e12, "payout should track liquidity share");
+    }
+
+    function test_configurePool_isOwnerOnly() public {
+        (PoolKey memory other,) = initPool(currency0, currency1, IHooks(address(hook)), 3000, 60, SQRT_PRICE_1_1);
+
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(VernierParHook.NotOwner.selector);
+        hook.configurePool(other, IRateSource(address(source)), MAX_APR_PIPS, true);
+    }
+
+    function test_untrustedRouterCannotSpoofPositionOwner() public {
+        address victim = makeAddr("victim");
+        _addAs(parPool, LIQUIDITY, bytes32(uint256(7)), victim);
+
+        _runFlow(3);
+
+        (, uint256 pending1) = hook.pendingRetention(parPool.toId(), victim, TICK_LOWER, TICK_UPPER, bytes32(uint256(7)));
+        assertEq(pending1, 0, "hookData must be ignored from an untrusted caller");
+    }
+
+    function _runFlow(uint16 periods) internal {
+        for (uint16 i = 0; i < periods; i++) {
+            vm.warp(block.timestamp + PERIOD);
+            vault.accrue(ACCRUAL_PIPS);
+            swap(parPool, true, -1e18, "");
+        }
+    }
+
+    function _addAs(PoolKey memory key, int256 liquidity, bytes32 salt, address positionOwner) internal {
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            ModifyLiquidityParams({
+                tickLower: TICK_LOWER,
+                tickUpper: TICK_UPPER,
+                liquidityDelta: liquidity,
+                salt: salt
+            }),
+            abi.encode(positionOwner)
+        );
+    }
+
     function _lpValue(PoolKey memory key, uint256 par) internal returns (uint256) {
         BalanceDelta delta = modifyLiquidityRouter.modifyLiquidity(
             key,

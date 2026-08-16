@@ -28,11 +28,10 @@ contract VernierParHook is BaseHook {
     error PoolNotConfigured();
     error PoolAlreadyConfigured();
     error RateJumpTooLarge();
-    error NotConfigurer();
+    error NotOwner();
 
     struct YieldConfig {
         IRateSource source;
-        address configurer;
         uint256 referenceRate;
         uint64 lastRateAt;
         uint24 maxRateAprPips;
@@ -42,6 +41,13 @@ contract VernierParHook is BaseHook {
 
     uint256 internal constant ONE = 1e18;
     uint256 internal constant YEAR = 365 days;
+
+    address public immutable owner;
+
+    /// v4 reports the caller of modifyLiquidity, which for any periphery router is the
+    /// router itself. Routers listed here may name the real position owner in hookData;
+    /// anyone else is taken at face value.
+    mapping(address => bool) public trustedRouter;
 
     mapping(PoolId => YieldConfig) public configOf;
     mapping(PoolId => uint256) public lastRateOf;
@@ -54,8 +60,22 @@ contract VernierParHook is BaseHook {
     event PoolConfigured(PoolId indexed poolId, address indexed source, uint256 referenceRate);
     event StalenessPriced(PoolId indexed poolId, uint256 rate, uint256 multiplier, uint256 corrected);
     event RateUnavailable(PoolId indexed poolId);
+    event Claimed(PoolId indexed poolId, address indexed lp, uint256 amount0, uint256 amount1);
+    event TrustedRouterSet(address indexed router, bool trusted);
 
-    constructor(IPoolManager _poolManager) BaseHook(_poolManager) {}
+    constructor(IPoolManager _poolManager) BaseHook(_poolManager) {
+        owner = msg.sender;
+    }
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotOwner();
+        _;
+    }
+
+    function setTrustedRouter(address router, bool trusted) external onlyOwner {
+        trustedRouter[router] = trusted;
+        emit TrustedRouterSet(router, trusted);
+    }
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
@@ -76,8 +96,11 @@ contract VernierParHook is BaseHook {
         });
     }
 
+    /// Curated by design: an unconfigured pool reverts every swap, so leaving this open
+    /// would let anyone brick a pool or pin it to a hostile rate source permanently.
     function configurePool(PoolKey calldata key, IRateSource source, uint24 maxRateAprPips, bool yieldIsCurrency1)
         external
+        onlyOwner
     {
         PoolId id = key.toId();
         if (configOf[id].configured) revert PoolAlreadyConfigured();
@@ -85,7 +108,6 @@ contract VernierParHook is BaseHook {
         uint256 rate = source.getRate();
         configOf[id] = YieldConfig({
             source: source,
-            configurer: msg.sender,
             referenceRate: rate,
             lastRateAt: uint64(block.timestamp),
             maxRateAprPips: maxRateAprPips,
@@ -195,10 +217,11 @@ contract VernierParHook is BaseHook {
         ModifyLiquidityParams calldata params,
         BalanceDelta,
         BalanceDelta,
-        bytes calldata
+        bytes calldata hookData
     ) internal override returns (bytes4, BalanceDelta) {
         PoolId id = key.toId();
-        bytes32 posKey = _positionKey(sender, params.tickLower, params.tickUpper, params.salt);
+        bytes32 posKey =
+            _positionKey(_positionOwner(sender, hookData), params.tickLower, params.tickUpper, params.salt);
         uint128 amount = uint128(uint256(params.liquidityDelta));
         _retained0[id].addLiquidity(_position0[id][posKey], amount);
         _retained1[id].addLiquidity(_position1[id][posKey], amount);
@@ -209,26 +232,56 @@ contract VernierParHook is BaseHook {
         address sender,
         PoolKey calldata key,
         ModifyLiquidityParams calldata params,
-        bytes calldata
+        bytes calldata hookData
     ) internal override returns (bytes4) {
         PoolId id = key.toId();
-        bytes32 posKey = _positionKey(sender, params.tickLower, params.tickUpper, params.salt);
+        bytes32 posKey =
+            _positionKey(_positionOwner(sender, hookData), params.tickLower, params.tickUpper, params.salt);
         uint128 amount = uint128(uint256(-params.liquidityDelta));
         _retained0[id].removeLiquidity(_position0[id][posKey], amount);
         _retained1[id].removeLiquidity(_position1[id][posKey], amount);
         return IHooks.beforeRemoveLiquidity.selector;
     }
 
+    function claim(PoolKey calldata key, int24 tickLower, int24 tickUpper, bytes32 salt)
+        external
+        returns (uint256 amount0, uint256 amount1)
+    {
+        PoolId id = key.toId();
+        bytes32 posKey = _positionKey(msg.sender, tickLower, tickUpper, salt);
+
+        Retention.Position storage p0 = _position0[id][posKey];
+        Retention.Position storage p1 = _position1[id][posKey];
+
+        _retained0[id].settle(p0);
+        _retained1[id].settle(p1);
+
+        amount0 = p0.accrued;
+        amount1 = p1.accrued;
+        p0.accrued = 0;
+        p1.accrued = 0;
+
+        if (amount0 > 0) key.currency0.transfer(msg.sender, amount0);
+        if (amount1 > 0) key.currency1.transfer(msg.sender, amount1);
+
+        emit Claimed(id, msg.sender, amount0, amount1);
+    }
+
+    function _positionOwner(address sender, bytes calldata hookData) internal view returns (address) {
+        if (hookData.length == 32 && trustedRouter[sender]) return abi.decode(hookData, (address));
+        return sender;
+    }
+
     function poolRetention(PoolId id) external view returns (uint256 retained0, uint256 retained1) {
         return (_retained0[id].totalRetained, _retained1[id].totalRetained);
     }
 
-    function pendingRetention(PoolId id, address owner, int24 tickLower, int24 tickUpper, bytes32 salt)
+    function pendingRetention(PoolId id, address lp, int24 tickLower, int24 tickUpper, bytes32 salt)
         external
         view
         returns (uint256 amount0, uint256 amount1)
     {
-        bytes32 posKey = _positionKey(owner, tickLower, tickUpper, salt);
+        bytes32 posKey = _positionKey(lp, tickLower, tickUpper, salt);
         return (_retained0[id].pending(_position0[id][posKey]), _retained1[id].pending(_position1[id][posKey]));
     }
 
