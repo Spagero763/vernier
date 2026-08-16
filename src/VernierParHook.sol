@@ -285,11 +285,11 @@ contract VernierParHook is BaseHook {
         return (_retained0[id].pending(_position0[id][posKey]), _retained1[id].pending(_position1[id][posKey]));
     }
 
-    function _positionKey(address owner, int24 tickLower, int24 tickUpper, bytes32 salt)
+    function _positionKey(address lp, int24 tickLower, int24 tickUpper, bytes32 salt)
         internal
         pure
         returns (bytes32)
     {
-        return keccak256(abi.encode(owner, tickLower, tickUpper, salt));
+        return keccak256(abi.encode(lp, tickLower, tickUpper, salt));
     }
 }
