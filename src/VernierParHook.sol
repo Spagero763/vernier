@@ -60,6 +60,7 @@ contract VernierParHook is BaseHook {
     event StalenessPriced(PoolId indexed poolId, uint256 rate, uint256 multiplier, uint256 corrected);
     event RateUnavailable(PoolId indexed poolId);
     event RateClamped(PoolId indexed poolId, uint256 reported, uint256 accepted);
+    event CorrectionHeld(PoolId indexed poolId, uint256 amount);
     event Claimed(PoolId indexed poolId, address indexed lp, uint256 amount0, uint256 amount1);
     event TrustedRouterSet(address indexed router, bool trusted);
 
@@ -143,17 +144,29 @@ contract VernierParHook is BaseHook {
         (uint256 correction, Currency unspecified) = _correction(key, cfg, params, delta, multiplier);
         if (correction == 0) return (IHooks.afterSwap.selector, int128(0));
 
-        poolManager.take(unspecified, address(this), correction);
-
-        if (Currency.unwrap(unspecified) == Currency.unwrap(key.currency0)) {
-            _retained0[id].accrue(correction);
-        } else {
-            _retained1[id].accrue(correction);
-        }
-
+        _settle(id, key, unspecified, correction);
         emit StalenessPriced(id, rate, multiplier, correction);
 
         return (IHooks.afterSwap.selector, int128(uint128(correction)));
+    }
+
+    /// donate settles the hook's credit straight into fee growth, which v4 already splits
+    /// across in-range liquidity. A ledger of our own would pay positions parked outside
+    /// the active range for flow they never absorbed.
+    function _settle(PoolId id, PoolKey calldata key, Currency unspecified, uint256 correction) internal {
+        bool isCurrency0 = Currency.unwrap(unspecified) == Currency.unwrap(key.currency0);
+
+        try poolManager.donate(key, isCurrency0 ? correction : 0, isCurrency0 ? 0 : correction, "") {}
+        catch {
+            // nothing in range to receive it, so hold the value and let LPs claim instead
+            poolManager.take(unspecified, address(this), correction);
+            if (isCurrency0) {
+                _retained0[id].accrue(correction);
+            } else {
+                _retained1[id].accrue(correction);
+            }
+            emit CorrectionHeld(id, correction);
+        }
     }
 
     function _readRate(PoolId id, YieldConfig memory cfg) internal returns (uint256) {

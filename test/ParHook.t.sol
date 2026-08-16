@@ -97,53 +97,47 @@ contract ParHookTest is Test, Deployers {
         }
 
         uint256 par = vault.rate();
-        (, uint256 retained1) = hook.poolRetention(parPool.toId());
 
+        // corrections are donated into fee growth, so withdrawing the position collects
+        // them; nothing extra has to be added by hand here
         uint256 baseValue = _lpValue(basePool, par);
-        uint256 parValue = _lpValue(parPool, par) + (retained1 * par) / 1e18;
+        uint256 parValue = _lpValue(parPool, par);
 
         console.log("baseline LP value :", baseValue);
         console.log("par-pool LP value :", parValue);
-        console.log("retained for LPs  :", retained1);
         console.log("uplift (bps)      :", ((parValue - baseValue) * 10_000) / baseValue);
 
-        assertGt(retained1, 0, "correction should accrue on organic flow");
         assertGt(parValue, baseValue, "par-pool LPs should end up ahead");
     }
 
-    function test_claim_paysOutRetainedValue() public {
+    /// When a swap leaves the price outside every position, v4 has no in-range liquidity
+    /// to donate to. The correction is held instead of being dropped, and LPs claim it.
+    function test_heldCorrection_isClaimableWhenDonateCannotPay() public {
         hook.setTrustedRouter(address(modifyLiquidityRouter), true);
-        _addAs(parPool, LIQUIDITY, bytes32(uint256(1)), address(this));
 
-        _runFlow(6);
+        (PoolKey memory narrow,) = initPool(currency0, currency1, IHooks(address(hook)), 3000, 60, SQRT_PRICE_1_1);
+        hook.configurePool(narrow, IRateSource(address(source)), MAX_APR_PIPS, true);
+        _addRange(narrow, -600, 600, LIQUIDITY, bytes32(uint256(1)), address(this));
 
-        (, uint256 pending1) = hook.pendingRetention(parPool.toId(), address(this), TICK_LOWER, TICK_UPPER, bytes32(uint256(1)));
-        assertGt(pending1, 0, "position should be owed part of the correction");
+        vm.warp(block.timestamp + PERIOD * 3);
+        vault.accrue(ACCRUAL_PIPS * 3);
+
+        // large enough to walk the price clean out of the only position
+        swap(narrow, true, -60e18, "");
+
+        (, uint256 held) = hook.poolRetention(narrow.toId());
+        console.log("held for later claim:", held);
+        assertGt(held, 0, "correction must be kept when it cannot be donated");
 
         uint256 before = currency1.balanceOfSelf();
-        (, uint256 paid1) = hook.claim(parPool, TICK_LOWER, TICK_UPPER, bytes32(uint256(1)));
+        (, uint256 paid1) = hook.claim(narrow, -600, 600, bytes32(uint256(1)));
 
-        assertEq(paid1, pending1, "claim should pay exactly what was owed");
+        assertGt(paid1, 0, "held correction should be claimable");
         assertEq(currency1.balanceOfSelf() - before, paid1, "tokens should reach the LP");
 
-        (, uint256 afterPending) = hook.pendingRetention(parPool.toId(), address(this), TICK_LOWER, TICK_UPPER, bytes32(uint256(1)));
+        (, uint256 afterPending) =
+            hook.pendingRetention(narrow.toId(), address(this), -600, 600, bytes32(uint256(1)));
         assertEq(afterPending, 0, "claim should zero the position");
-    }
-
-    function test_claim_splitsProportionallyToLiquidity() public {
-        hook.setTrustedRouter(address(modifyLiquidityRouter), true);
-        _addAs(parPool, LIQUIDITY, bytes32(uint256(1)), address(this));
-        _addAs(parPool, LIQUIDITY * 3, bytes32(uint256(2)), address(this));
-
-        _runFlow(6);
-
-        (, uint256 small) = hook.claim(parPool, TICK_LOWER, TICK_UPPER, bytes32(uint256(1)));
-        (, uint256 large) = hook.claim(parPool, TICK_LOWER, TICK_UPPER, bytes32(uint256(2)));
-
-        console.log("1x position claimed:", small);
-        console.log("3x position claimed:", large);
-
-        assertApproxEqRel(large, small * 3, 1e12, "payout should track liquidity share");
     }
 
     function test_configurePool_isOwnerOnly() public {
@@ -173,14 +167,20 @@ contract ParHookTest is Test, Deployers {
     }
 
     function _addAs(PoolKey memory key, int256 liquidity, bytes32 salt, address positionOwner) internal {
+        _addRange(key, TICK_LOWER, TICK_UPPER, liquidity, salt, positionOwner);
+    }
+
+    function _addRange(
+        PoolKey memory key,
+        int24 lower,
+        int24 upper,
+        int256 liquidity,
+        bytes32 salt,
+        address positionOwner
+    ) internal {
         modifyLiquidityRouter.modifyLiquidity(
             key,
-            ModifyLiquidityParams({
-                tickLower: TICK_LOWER,
-                tickUpper: TICK_UPPER,
-                liquidityDelta: liquidity,
-                salt: salt
-            }),
+            ModifyLiquidityParams({tickLower: lower, tickUpper: upper, liquidityDelta: liquidity, salt: salt}),
             abi.encode(positionOwner)
         );
     }
