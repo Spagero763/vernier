@@ -27,7 +27,6 @@ contract VernierParHook is BaseHook {
 
     error PoolNotConfigured();
     error PoolAlreadyConfigured();
-    error RateJumpTooLarge();
     error NotOwner();
 
     struct YieldConfig {
@@ -60,6 +59,7 @@ contract VernierParHook is BaseHook {
     event PoolConfigured(PoolId indexed poolId, address indexed source, uint256 referenceRate);
     event StalenessPriced(PoolId indexed poolId, uint256 rate, uint256 multiplier, uint256 corrected);
     event RateUnavailable(PoolId indexed poolId);
+    event RateClamped(PoolId indexed poolId, uint256 reported, uint256 accepted);
     event Claimed(PoolId indexed poolId, address indexed lp, uint256 amount0, uint256 amount1);
     event TrustedRouterSet(address indexed router, bool trusted);
 
@@ -131,13 +131,14 @@ contract VernierParHook is BaseHook {
         uint256 rate = _readRate(id, cfg);
         if (rate == 0) return (IHooks.afterSwap.selector, int128(0));
 
-        _guardRate(id, cfg, rate);
-
-        // the swapper only captures staleness when taking the yield token off the curve
-        if (params.zeroForOne != cfg.yieldIsCurrency1) return (IHooks.afterSwap.selector, int128(0));
-
+        rate = _plausibleRate(id, cfg, rate);
         uint256 multiplier = FullMath.mulDiv(rate, ONE, cfg.referenceRate);
-        if (multiplier <= ONE) return (IHooks.afterSwap.selector, int128(0));
+        if (multiplier == ONE) return (IHooks.afterSwap.selector, int128(0));
+
+        // staleness favours whoever takes the side the curve has wrong: the buyer while
+        // the curve underprices the token, the seller once it overprices it
+        bool buyingYield = params.zeroForOne == cfg.yieldIsCurrency1;
+        if ((multiplier > ONE) != buyingYield) return (IHooks.afterSwap.selector, int128(0));
 
         (uint256 correction, Currency unspecified) = _correction(key, cfg, params, delta, multiplier);
         if (correction == 0) return (IHooks.afterSwap.selector, int128(0));
@@ -165,6 +166,8 @@ contract VernierParHook is BaseHook {
         }
     }
 
+    /// Always adjusts the leg the swapper did not specify, which is the yield token on
+    /// one swap type and the quote on the other, so neither routes around the correction.
     function _correction(
         PoolKey calldata key,
         YieldConfig memory cfg,
@@ -172,43 +175,70 @@ contract VernierParHook is BaseHook {
         BalanceDelta delta,
         uint256 multiplier
     ) internal pure returns (uint256, Currency) {
-        if (params.amountSpecified < 0) {
-            // unspecified leg is the yield output: hand back only what par supports
-            int128 yieldLeg = cfg.yieldIsCurrency1 ? delta.amount1() : delta.amount0();
-            if (yieldLeg <= 0) return (0, key.currency0);
+        bool exactInput = params.amountSpecified < 0;
+        int128 yieldLeg = cfg.yieldIsCurrency1 ? delta.amount1() : delta.amount0();
+        int128 quoteLeg = cfg.yieldIsCurrency1 ? delta.amount0() : delta.amount1();
+
+        if (multiplier > ONE) {
+            if (exactInput) {
+                if (yieldLeg <= 0) return (0, key.currency0);
+                return (
+                    FullMath.mulDiv(uint256(uint128(yieldLeg)), multiplier - ONE, multiplier),
+                    cfg.yieldIsCurrency1 ? key.currency1 : key.currency0
+                );
+            }
+            if (quoteLeg >= 0) return (0, key.currency0);
             return (
-                FullMath.mulDiv(uint256(uint128(yieldLeg)), multiplier - ONE, multiplier),
-                cfg.yieldIsCurrency1 ? key.currency1 : key.currency0
+                FullMath.mulDiv(uint256(uint128(-quoteLeg)), multiplier - ONE, ONE),
+                cfg.yieldIsCurrency1 ? key.currency0 : key.currency1
             );
         }
 
-        // unspecified leg is the quote input: charge what par actually costs
-        int128 quoteLeg = cfg.yieldIsCurrency1 ? delta.amount0() : delta.amount1();
-        if (quoteLeg >= 0) return (0, key.currency0);
+        if (exactInput) {
+            if (quoteLeg <= 0) return (0, key.currency0);
+            return (
+                FullMath.mulDiv(uint256(uint128(quoteLeg)), ONE - multiplier, ONE),
+                cfg.yieldIsCurrency1 ? key.currency0 : key.currency1
+            );
+        }
+        if (yieldLeg >= 0) return (0, key.currency0);
         return (
-            FullMath.mulDiv(uint256(uint128(-quoteLeg)), multiplier - ONE, ONE),
-            cfg.yieldIsCurrency1 ? key.currency0 : key.currency1
+            FullMath.mulDiv(uint256(uint128(-yieldLeg)), ONE - multiplier, multiplier),
+            cfg.yieldIsCurrency1 ? key.currency1 : key.currency0
         );
     }
 
-    /// Bounds the rate by implied APR rather than per-swap step, so a sequence of
-    /// small moves cannot ratchet the reference the way a step bound allows.
-    function _guardRate(PoolId id, YieldConfig memory cfg, uint256 rate) internal {
+    /// Bounds how fast the reference may move, by implied APR over elapsed time rather
+    /// than per-swap step size, so a sequence of small moves cannot ratchet it.
+    ///
+    /// A reading past the bound is clamped, not rejected. Reverting would let anyone able
+    /// to disturb the rate source freeze the pool, and ignoring the move outright would
+    /// disable the correction exactly when the token is repricing hardest. Clamping keeps
+    /// correcting in the right direction while capping what any single reading can do; a
+    /// genuine move is tracked over subsequent swaps as the bound allows.
+    function _plausibleRate(PoolId id, YieldConfig memory cfg, uint256 rate) internal returns (uint256) {
         uint256 previous = lastRateOf[id];
         if (previous == 0) revert PoolNotConfigured();
-        if (rate == previous) return;
+        if (rate == previous) return rate;
+
+        uint256 accepted = rate;
 
         if (cfg.maxRateAprPips != 0) {
             uint256 elapsed = block.timestamp - cfg.lastRateAt;
             if (elapsed == 0) elapsed = 1;
 
+            uint256 maxChange = FullMath.mulDiv(previous, uint256(cfg.maxRateAprPips) * elapsed, 1_000_000 * YEAR);
             uint256 change = rate > previous ? rate - previous : previous - rate;
-            uint256 impliedApr = FullMath.mulDiv(change, 1_000_000 * YEAR, previous * elapsed);
-            if (impliedApr > cfg.maxRateAprPips) revert RateJumpTooLarge();
+
+            if (change > maxChange) {
+                accepted = rate > previous ? previous + maxChange : previous - maxChange;
+                emit RateClamped(id, rate, accepted);
+            }
         }
 
-        lastRateOf[id] = rate;
+        lastRateOf[id] = accepted;
         configOf[id].lastRateAt = uint64(block.timestamp);
+        return accepted;
     }
 
     function _afterAddLiquidity(
