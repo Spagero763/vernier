@@ -3,6 +3,7 @@ pragma solidity ^0.8.26;
 
 import {BaseHook} from "./base/BaseHook.sol";
 import {IRateSource} from "./interfaces/IRateSource.sol";
+import {IRateAttestor} from "./interfaces/IRateAttestor.sol";
 import {Retention} from "./lib/Retention.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
@@ -48,6 +49,8 @@ contract VernierParHook is BaseHook {
     /// anyone else is taken at face value.
     mapping(address => bool) public trustedRouter;
 
+    mapping(PoolId => IRateAttestor) public attestorOf;
+
     mapping(PoolId => YieldConfig) public configOf;
     mapping(PoolId => uint256) public lastRateOf;
 
@@ -63,6 +66,8 @@ contract VernierParHook is BaseHook {
     event CorrectionHeld(PoolId indexed poolId, uint256 amount);
     event Claimed(PoolId indexed poolId, address indexed lp, uint256 amount0, uint256 amount1);
     event TrustedRouterSet(address indexed router, bool trusted);
+    event AttestorSet(PoolId indexed poolId, address indexed attestor);
+    event CorrectionSuspended(PoolId indexed poolId);
 
     constructor(IPoolManager _poolManager) BaseHook(_poolManager) {
         owner = msg.sender;
@@ -71,6 +76,12 @@ contract VernierParHook is BaseHook {
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
+    }
+
+    function setAttestor(PoolKey calldata key, IRateAttestor attestor) external onlyOwner {
+        PoolId id = key.toId();
+        attestorOf[id] = attestor;
+        emit AttestorSet(id, address(attestor));
     }
 
     function setTrustedRouter(address router, bool trusted) external onlyOwner {
@@ -132,6 +143,11 @@ contract VernierParHook is BaseHook {
         uint256 rate = _readRate(id, cfg);
         if (rate == 0) return (IHooks.afterSwap.selector, int128(0));
 
+        if (!_attestedSound(id)) {
+            emit CorrectionSuspended(id);
+            return (IHooks.afterSwap.selector, int128(0));
+        }
+
         rate = _plausibleRate(id, cfg, rate);
         uint256 multiplier = FullMath.mulDiv(rate, ONE, cfg.referenceRate);
         if (multiplier == ONE) return (IHooks.afterSwap.selector, int128(0));
@@ -166,6 +182,20 @@ contract VernierParHook is BaseHook {
                 _retained1[id].accrue(correction);
             }
             emit CorrectionHeld(id, correction);
+        }
+    }
+
+    /// An attestor that reverts, runs out of gas, or is simply unset must not be able to
+    /// stop the pool trading, so anything other than an explicit "unsound" is treated as
+    /// sound and the hook falls back to its own bounds.
+    function _attestedSound(PoolId id) internal view returns (bool) {
+        IRateAttestor attestor = attestorOf[id];
+        if (address(attestor) == address(0)) return true;
+
+        try attestor.isSound(id) returns (bool sound) {
+            return sound;
+        } catch {
+            return true;
         }
     }
 
