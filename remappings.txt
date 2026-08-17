@@ -4,4 +4,4 @@ v4-periphery/=lib/v4-periphery/
 solmate/=lib/v4-core/lib/solmate/
 forge-std/=lib/forge-std/src/
 permit2/=lib/v4-periphery/lib/permit2/
-@openzeppelin/=lib/v4-periphery/lib/openzeppelin-contracts/
+@openzeppelin/=lib/v4-core/lib/openzeppelin-contracts/
