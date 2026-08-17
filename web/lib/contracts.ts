@@ -1,26 +1,38 @@
 export const ADDR = {
   poolManager: "0x00B036B58a818B1BC34d502D3fE730Db729e62AC",
   stateView: "0xc199f1072a74d4e905aba1a84d9a45e2546b6222",
-  hook: "0x56399d47B53cdd89b0840A477602a4cC74AeC680",
-  usdc: "0x8494B7d150c1a32Af256dDe48aF4b676b4E56894",
-  syield: "0x7a7C98591E98E1F80ac4D9d5E86dDfD59da4079F",
-  vault: "0xeaafc02bd710989fb3fD20C4eAa29e64796ea3f3",
-  rateSource: "0x30747A302528ad95986a00E43309C3Efed2Af207",
-  // stateless helper routers, reusable across pools on the same PoolManager
-  lpRouter: "0xfEC4087C2a9e87C3205c137bf4fFcd50bbA25c39",
-  swapRouter: "0xC43A265B6AA1627264a07206eBc61B833477d7bd",
+  hook: "0x62e4C0D7E1c366a219006f6034acFaa65b6A0644",
+  attestor: "0x3E663DE490271A1D8c2F2857d82c789c931F9B24",
+  usdc: "0xff445090472ebDA1d5b4c9e9C6C56c82831E9697",
+  syield: "0xCc18892E1ae1ECD127815916F90ce239d36e3D23",
+  vault: "0xA029fE0c6dd9CCFA6ea9C6E1d6B5D6Fc3496EA14",
+  rateSource: "0x7d06Bf495917062Fde1bB3Ace1F39C65a1aC923d",
+  lpRouter: "0x7301548d7e76001255A089FD704b47F0D07d63ee",
+  swapRouter: "0xf428f53Ab7e133C3d79d0f3dA6Cf6a9dc3D0277F",
 } as const;
 
+// same tokens, same fee, same spacing, same starting price: the only difference
+// between these two pools is whether the hook is attached
 export const POOL_ID =
-  "0xfe9bc2ce73e72c31ddf85953ec09b757d202050bdde25fed7949997fc9c13e84" as const;
+  "0xf1c353d3744b932bba5bc1aec3093a77f3c50ff0df11fc8995d1b25f7bb0534c" as const;
+export const BASELINE_POOL_ID =
+  "0xbb5701c384855eb79ff6ced1c7921235f0c3b607886c86a9c96fba24fe0f4ec1" as const;
+
+export const POOL_FEE = 500;
+export const TICK_SPACING = 60;
 
 // currency0 = sYIELD (lower address), currency1 = USDC
 export const POOL_KEY = {
   currency0: ADDR.syield,
   currency1: ADDR.usdc,
-  fee: 8388608, // DYNAMIC_FEE_FLAG
-  tickSpacing: 60,
+  fee: POOL_FEE,
+  tickSpacing: TICK_SPACING,
   hooks: ADDR.hook,
+} as const;
+
+export const BASELINE_POOL_KEY = {
+  ...POOL_KEY,
+  hooks: "0x0000000000000000000000000000000000000000",
 } as const;
 
 // the yield token sits on the currency0 side of this pool
@@ -36,9 +48,8 @@ export const hookAbi = [
     stateMutability: "view",
     inputs: [{ name: "id", type: "bytes32" }],
     outputs: [
-      { name: "accPerLiquidity", type: "uint256" },
-      { name: "totalLiquidity", type: "uint256" },
-      { name: "totalRetained", type: "uint256" },
+      { name: "retained0", type: "uint256" },
+      { name: "retained1", type: "uint256" },
     ],
   },
   {
@@ -47,6 +58,20 @@ export const hookAbi = [
     stateMutability: "view",
     inputs: [{ name: "id", type: "bytes32" }],
     outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "configOf",
+    stateMutability: "view",
+    inputs: [{ name: "id", type: "bytes32" }],
+    outputs: [
+      { name: "source", type: "address" },
+      { name: "referenceRate", type: "uint256" },
+      { name: "lastRateAt", type: "uint64" },
+      { name: "maxRateAprPips", type: "uint24" },
+      { name: "yieldIsCurrency1", type: "bool" },
+      { name: "configured", type: "bool" },
+    ],
   },
   {
     type: "function",
@@ -59,7 +84,10 @@ export const hookAbi = [
       { name: "tickUpper", type: "int24" },
       { name: "salt", type: "bytes32" },
     ],
-    outputs: [{ name: "", type: "uint256" }],
+    outputs: [
+      { name: "amount0", type: "uint256" },
+      { name: "amount1", type: "uint256" },
+    ],
   },
 ] as const;
 
@@ -76,21 +104,60 @@ export const stateViewAbi = [
       { name: "lpFee", type: "uint24" },
     ],
   },
+  {
+    type: "function",
+    name: "getLiquidity",
+    stateMutability: "view",
+    inputs: [{ name: "poolId", type: "bytes32" }],
+    outputs: [{ name: "liquidity", type: "uint128" }],
+  },
+  {
+    type: "function",
+    name: "getFeeGrowthGlobals",
+    stateMutability: "view",
+    inputs: [{ name: "poolId", type: "bytes32" }],
+    outputs: [
+      { name: "feeGrowthGlobal0", type: "uint256" },
+      { name: "feeGrowthGlobal1", type: "uint256" },
+    ],
+  },
 ] as const;
 
-// signed gap between the pool price and the par price implied by the yield
-// token's rate, in pips (1_000_000 = 100%). positive when the pool trades
-// above par. mirrors the hook's fee computation.
-export function signedGapPips(sqrtPriceX96: bigint, rate: bigint): bigint {
-  if (sqrtPriceX96 === 0n || rate === 0n) return 0n;
-  const Q96 = 2n ** 96n;
-  const priceX96 = (sqrtPriceX96 * sqrtPriceX96) / Q96;
-  const pool = (priceX96 * 10n ** 18n) / Q96;
-  const fair = YIELD_IS_CURRENCY1 ? 10n ** 36n / rate : rate;
-  if (pool === 0n || fair === 0n) return 0n;
-  return pool > fair
-    ? ((pool - fair) * 1_000_000n) / fair
-    : -(((fair - pool) * 1_000_000n) / pool);
+export const attestorAbi = [
+  {
+    type: "function",
+    name: "isSound",
+    stateMutability: "view",
+    inputs: [{ name: "id", type: "bytes32" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "attestationOf",
+    stateMutability: "view",
+    inputs: [{ name: "id", type: "bytes32" }],
+    outputs: [
+      { name: "sound", type: "bool" },
+      { name: "at", type: "uint64" },
+      { name: "nonce", type: "uint64" },
+    ],
+  },
+] as const;
+
+// how far the curve has gone stale against the rate the token publishes, in pips
+// (1_000_000 = 100%). positive when the curve is underpricing the yield token,
+// which is the side the hook corrects.
+export function stalenessPips(referenceRate: bigint, rate: bigint): bigint {
+  if (referenceRate === 0n || rate === 0n) return 0n;
+  return ((rate - referenceRate) * 1_000_000n) / referenceRate;
+}
+
+// the ceiling the hook will accept from a single reading, given elapsed time.
+// a reading past this is clamped rather than rejected, so the pool keeps pricing
+// in the right direction without taking one report's word for a large move.
+export function maxAcceptedPips(maxRateAprPips: bigint, elapsedSeconds: bigint): bigint {
+  const YEAR = 31_536_000n;
+  return (maxRateAprPips * elapsedSeconds) / YEAR;
 }
 
 export const vaultAbi = [

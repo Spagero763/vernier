@@ -19,9 +19,12 @@ import {
   ADDR,
   POOL_ID,
   POOL_KEY,
+  BASELINE_POOL_ID,
+  BASELINE_POOL_KEY,
   MIN_SQRT_PRICE_PLUS_ONE,
   MAX_SQRT_PRICE_MINUS_ONE,
-  signedGapPips,
+  stalenessPips,
+  maxAcceptedPips,
   hookAbi,
   stateViewAbi,
   vaultAbi,
@@ -33,6 +36,7 @@ import { Logo } from "./Logo";
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const EXPLORER = unichainSepolia.blockExplorers.default.url;
+const Q128 = 2n ** 128n;
 
 const fadeUp = {
   hidden: { opacity: 0, y: 18 },
@@ -45,6 +49,9 @@ const stagger = {
 };
 
 type Toast = { kind: "pending" | "ok" | "err"; text: string } | null;
+
+// fee growth is per unit of liquidity, scaled by 2^128
+const earned = (growth: bigint, liquidity: bigint) => (growth * liquidity) / Q128;
 
 export function Dashboard() {
   const { address, isConnected, chainId } = useAccount();
@@ -59,27 +66,45 @@ export function Dashboard() {
 
   const { data, refetch } = useReadContracts({
     contracts: [
-      { address: ADDR.hook, abi: hookAbi, functionName: "poolRetention", args: [POOL_ID] },
+      { address: ADDR.stateView, abi: stateViewAbi, functionName: "getFeeGrowthGlobals", args: [POOL_ID] },
+      { address: ADDR.stateView, abi: stateViewAbi, functionName: "getFeeGrowthGlobals", args: [BASELINE_POOL_ID] },
+      { address: ADDR.stateView, abi: stateViewAbi, functionName: "getLiquidity", args: [POOL_ID] },
+      { address: ADDR.stateView, abi: stateViewAbi, functionName: "getLiquidity", args: [BASELINE_POOL_ID] },
+      { address: ADDR.hook, abi: hookAbi, functionName: "configOf", args: [POOL_ID] },
       { address: ADDR.hook, abi: hookAbi, functionName: "lastRateOf", args: [POOL_ID] },
       { address: ADDR.vault, abi: vaultAbi, functionName: "rate" },
-      { address: ADDR.stateView, abi: stateViewAbi, functionName: "getSlot0", args: [POOL_ID] },
     ],
     query: { refetchInterval: 4000 },
   });
 
-  const retention = data?.[0]?.result as readonly [bigint, bigint, bigint] | undefined;
-  const totalLiquidity = retention?.[1] ?? 0n;
-  const totalRetained = retention?.[2] ?? 0n;
-  const rate = (data?.[2]?.result as bigint | undefined) ?? 10n ** 18n;
-  const slot0 = data?.[3]?.result as readonly [bigint, number, number, number] | undefined;
+  const vernGrowth = data?.[0]?.result as readonly [bigint, bigint] | undefined;
+  const baseGrowth = data?.[1]?.result as readonly [bigint, bigint] | undefined;
+  const vernLiq = (data?.[2]?.result as bigint | undefined) ?? 0n;
+  const baseLiq = (data?.[3]?.result as bigint | undefined) ?? 0n;
+  const config = data?.[4]?.result as
+    | readonly [string, bigint, bigint, number, boolean, boolean]
+    | undefined;
+  const accepted = (data?.[5]?.result as bigint | undefined) ?? 10n ** 18n;
+  const reported = (data?.[6]?.result as bigint | undefined) ?? 10n ** 18n;
 
-  const retainedNum = Number(formatUnits(totalRetained, 18));
-  const rateNum = Number(formatUnits(rate, 18));
-  const liqNum = Number(formatUnits(totalLiquidity, 18));
-  const gapPct = slot0 ? Number(signedGapPips(slot0[0], rate)) / 10_000 : 0;
-  const absGap = Math.abs(gapPct);
-  const feePct = Math.min(absGap, 5);
-  const poolAbovePar = gapPct > 0.0005;
+  const referenceRate = config?.[1] ?? 10n ** 18n;
+  const lastRateAt = config?.[2] ?? 0n;
+  const maxAprPips = BigInt(config?.[3] ?? 0);
+
+  // the yield token is currency0 here, so the corrected leg is index 0
+  const vernYield = vernGrowth ? earned(vernGrowth[0], vernLiq) : 0n;
+  const baseYield = baseGrowth ? earned(baseGrowth[0], baseLiq) : 0n;
+  const vernQuote = vernGrowth ? earned(vernGrowth[1], vernLiq) : 0n;
+  const baseQuote = baseGrowth ? earned(baseGrowth[1], baseLiq) : 0n;
+
+  const keptNum = Number(formatUnits(vernYield - baseYield, 18));
+  const acceptedPct = Number(stalenessPips(referenceRate, accepted)) / 10_000;
+  const reportedPct = Number(stalenessPips(referenceRate, reported)) / 10_000;
+  const clamped = reported > accepted;
+
+  const nowSec = BigInt(Math.floor(Date.now() / 1000));
+  const elapsed = lastRateAt > 0n && nowSec > lastRateAt ? nowSec - lastRateAt : 0n;
+  const headroomPct = Number(maxAcceptedPips(maxAprPips, elapsed)) / 10_000;
 
   async function run(label: string, fn: () => Promise<`0x${string}`>) {
     try {
@@ -136,34 +161,44 @@ export function Dashboard() {
       });
     });
 
+  // accrue only what elapsed time can justify, so the demo shows the correction
+  // rather than the bound refusing an impossible rate
   const accrue = () =>
-    run("accrue", () =>
-      writeContractAsync({
+    run("accrue", () => {
+      const pips = maxAcceptedPips(maxAprPips, elapsed) / 2n;
+      return writeContractAsync({
         address: ADDR.vault,
         abi: vaultAbi,
         functionName: "accrue",
-        args: [2000n],
-      }),
-    );
+        args: [pips > 0n ? pips : 1n],
+      });
+    });
 
-  // trade toward par from whichever side the pool is on, so the demo swap
-  // always captures the live gap
-  const trade = () =>
-    run("trade", () =>
-      writeContractAsync({
+  // buying the yield token is the side a stale curve favours, so it is the side
+  // the hook corrects
+  const tradeBoth = () =>
+    run("trade", async () => {
+      const params = {
+        zeroForOne: false,
+        amountSpecified: -(10n ** 16n),
+        sqrtPriceLimitX96: MAX_SQRT_PRICE_MINUS_ONE,
+      } as const;
+
+      const h = await writeContractAsync({
         address: ADDR.swapRouter,
         abi: swapRouterAbi,
         functionName: "swap",
-        args: [
-          POOL_KEY,
-          {
-            zeroForOne: poolAbovePar,
-            amountSpecified: -(10n ** 16n),
-            sqrtPriceLimitX96: poolAbovePar ? MIN_SQRT_PRICE_PLUS_ONE : MAX_SQRT_PRICE_MINUS_ONE,
-          },
-        ],
-      }),
-    );
+        args: [BASELINE_POOL_KEY, params],
+      });
+      await waitForTransactionReceipt(wagmiConfig, { hash: h });
+
+      return writeContractAsync({
+        address: ADDR.swapRouter,
+        abi: swapRouterAbi,
+        functionName: "swap",
+        args: [POOL_KEY, params],
+      });
+    });
 
   return (
     <main className="mx-auto max-w-5xl px-5 pb-16">
@@ -198,12 +233,7 @@ export function Dashboard() {
         </div>
       </header>
 
-      <motion.section
-        variants={stagger}
-        initial="hidden"
-        animate="show"
-        className="mt-14 text-center"
-      >
+      <motion.section variants={stagger} initial="hidden" animate="show" className="mt-14 text-center">
         <motion.div variants={fadeUp} className="flex justify-center">
           <span className="pill">
             <span className="dot-live" />
@@ -217,8 +247,8 @@ export function Dashboard() {
           The liquidity venue for <span className="grad-text">yield-bearing assets</span>
         </motion.h1>
         <motion.p variants={fadeUp} className="mx-auto mt-4 max-w-2xl text-white/60">
-          Vernier reads each token&apos;s on-chain yield rate and prices it in real time, so the yield stays with
-          liquidity providers instead of leaking to arbitrage bots.
+          A yield token publishes the rate at which it appreciates. Vernier corrects the curve by exactly
+          that much, so accrual reaches liquidity providers instead of the first bot to notice.
         </motion.p>
         <motion.div variants={fadeUp} className="mt-7 flex justify-center gap-3">
           {!isConnected && (
@@ -239,7 +269,12 @@ export function Dashboard() {
         viewport={{ once: true, margin: "-60px" }}
         className="mt-12"
       >
-        <PegMonitor gapPct={gapPct} feePct={feePct} rateNum={rateNum} />
+        <HeadToHead
+          vernYield={Number(formatUnits(vernYield, 18))}
+          baseYield={Number(formatUnits(baseYield, 18))}
+          vernQuote={Number(formatUnits(vernQuote, 18))}
+          baseQuote={Number(formatUnits(baseQuote, 18))}
+        />
       </motion.section>
 
       <motion.section
@@ -250,24 +285,50 @@ export function Dashboard() {
         className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
       >
         <motion.div variants={fadeUp} className="card card-hero card-hover p-8">
-          <div className="text-sm text-white/50">Yield retained for LPs</div>
+          <div className="text-sm text-white/50">Accrual kept by LPs</div>
           <div className="mt-2 font-mono text-3xl font-semibold text-mint">
-            <Counter value={retainedNum} decimals={6} />
+            <Counter value={keptNum} decimals={9} />
           </div>
-          <div className="mt-1 text-xs text-white/40">captured on-chain, would leak to bots elsewhere</div>
+          <div className="mt-1 text-xs text-white/40">sYIELD the identical bare pool gave away</div>
         </motion.div>
-        <Stat label="Current par rate" value={`${rateNum.toFixed(4)}×`} hint="from the token's own rate" />
         <Stat
-          label="Pool gap from par"
-          value={`${absGap.toFixed(3)}%`}
-          hint="what an arbitrageur pays right now"
+          label="Curve staleness"
+          value={`${acceptedPct.toFixed(4)}%`}
+          hint="priced in, against the reference rate"
         />
         <Stat
-          label="Pool liquidity"
-          value={liqNum.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-          hint="active in range"
+          label="Plausibility headroom"
+          value={`${headroomPct.toFixed(4)}%`}
+          hint={`what ${(Number(maxAprPips) / 10_000).toFixed(0)}% APR justifies by now`}
+        />
+        <Stat
+          label="Reported rate"
+          value={`${(Number(formatUnits(reported, 18))).toFixed(6)}×`}
+          hint={clamped ? "ahead of what the bound accepts" : "within the bound"}
         />
       </motion.section>
+
+      {clamped && (
+        <motion.section
+          variants={fadeUp}
+          initial="hidden"
+          animate="show"
+          className="mt-4"
+        >
+          <div className="card border-amber-400/30 p-5">
+            <div className="flex items-center gap-2.5">
+              <span className="h-2 w-2 rounded-full bg-amber-400" />
+              <span className="font-medium">Rate clamped</span>
+            </div>
+            <div className="mt-2 text-sm text-white/60">
+              The source reports <span className="font-mono text-white/80">{reportedPct.toFixed(4)}%</span> of
+              appreciation, more than elapsed time can justify at the configured bound. Vernier is pricing{" "}
+              <span className="font-mono text-mint">{acceptedPct.toFixed(4)}%</span> and will track the rest as
+              time passes, rather than taking one reading&apos;s word for a large move.
+            </div>
+          </div>
+        </motion.section>
+      )}
 
       <motion.section
         variants={stagger}
@@ -278,18 +339,18 @@ export function Dashboard() {
       >
         <Step
           n="01"
-          title="Read par"
-          body="The hook reads the yield token's own on-chain rate. No external oracle, nothing to manipulate."
+          title="Read the rate"
+          body="The hook reads the yield token's own exchange rate. No feed, no keeper, nothing that trading pressure can move."
         />
         <Step
           n="02"
-          title="Price the gap"
-          body="Every swap is checked against par. Trades that harvest the mispricing pay a fee equal to the gap they capture. Everyone else pays nothing extra."
+          title="Correct the curve"
+          body="Accrual makes the curve stale by a known factor. The hook applies that factor to the leg the swapper did not specify, so accrual stops opening a gap while real market moves stay on the curve."
         />
         <Step
           n="03"
-          title="Pay it to LPs"
-          body="The captured value accrues to in-range liquidity providers, weighted by real exposure. The yield stays with the people who fund the market."
+          title="Settle to LPs"
+          body="The correction is donated into fee growth, which v4 already splits across in-range liquidity. Nothing is left for an arbitrageur to collect."
         />
       </motion.section>
 
@@ -306,7 +367,7 @@ export function Dashboard() {
             <div>
               <div className="font-medium">Live demo</div>
               <div className="text-sm text-white/50">
-                Mint test tokens, let yield accrue, then trade and watch the retained number climb.
+                Mint test tokens, accrue what elapsed time allows, then run the same trade against both pools.
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -314,10 +375,14 @@ export function Dashboard() {
                 {busy === "tokens" ? "Minting…" : "Get test tokens"}
               </button>
               <button className="btn" disabled={!isConnected || wrongChain || !!busy} onClick={accrue}>
-                {busy === "accrue" ? "Accruing…" : "Accrue yield +0.2%"}
+                {busy === "accrue" ? "Accruing…" : "Accrue yield"}
               </button>
-              <button className="btn btn-primary" disabled={!isConnected || wrongChain || !!busy} onClick={trade}>
-                {busy === "trade" ? "Trading…" : "Trade → capture yield"}
+              <button
+                className="btn btn-primary"
+                disabled={!isConnected || wrongChain || !!busy}
+                onClick={tradeBoth}
+              >
+                {busy === "trade" ? "Trading…" : "Trade both pools"}
               </button>
             </div>
           </div>
@@ -334,8 +399,8 @@ export function Dashboard() {
         viewport={{ once: true, margin: "-40px" }}
         className="mt-8 grid gap-3 text-sm sm:grid-cols-2"
       >
-        <Addr label="VernierHook" addr={ADDR.hook} />
-        <Addr label="Pool manager" addr={ADDR.poolManager} />
+        <Addr label="VernierParHook" addr={ADDR.hook} />
+        <Addr label="Rate attestation service" addr={ADDR.attestor} />
         <Addr label="Yield token (sYIELD)" addr={ADDR.syield} />
         <Addr label="Rate source" addr={ADDR.rateSource} />
       </motion.section>
@@ -379,65 +444,69 @@ export function Dashboard() {
   );
 }
 
-function PegMonitor({ gapPct, feePct, rateNum }: { gapPct: number; feePct: number; rateNum: number }) {
-  const clamped = Math.max(-0.6, Math.min(0.6, gapPct));
-  const pos = 50 + (clamped / 0.6) * 48;
-  const above = gapPct > 0.0005;
-  const below = gapPct < -0.0005;
-  const fillLeft = Math.min(pos, 50);
-  const fillWidth = Math.abs(pos - 50);
+function HeadToHead({
+  vernYield,
+  baseYield,
+  vernQuote,
+  baseQuote,
+}: {
+  vernYield: number;
+  baseYield: number;
+  vernQuote: number;
+  baseQuote: number;
+}) {
+  const max = Math.max(vernYield, baseYield, 1e-12);
 
   return (
     <div className="card p-6 sm:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <span className="dot-live" />
-          <span className="font-medium">Peg monitor</span>
-          <span className="text-sm text-white/40">pool price vs par, updated live</span>
+          <span className="font-medium">Two pools, one difference</span>
+          <span className="text-sm text-white/40">same pair, fee, spacing and start price</span>
         </div>
-        <span className="font-mono text-sm text-white/60">par {rateNum.toFixed(4)} USDC</span>
+        <span className="font-mono text-sm text-white/40">earned per LP position, sYIELD</span>
       </div>
 
-      <div className="relative mt-8 h-2 rounded-full bg-white/5">
+      <div className="mt-7 space-y-5">
+        <Bar label="Vernier" value={vernYield} max={max} tone="mint" />
+        <Bar label="No hook" value={baseYield} max={max} tone="dim" />
+      </div>
+
+      <div className="mt-6 grid gap-3 border-t border-white/5 pt-5 text-sm sm:grid-cols-2">
+        <div className="text-white/50">
+          Quote-leg fees are the ordinary swap fee and land on both:{" "}
+          <span className="font-mono text-white/70">{vernQuote.toFixed(9)}</span> against{" "}
+          <span className="font-mono text-white/70">{baseQuote.toFixed(9)}</span> USDC.
+        </div>
+        <div className="text-white/50">
+          The yield leg is the whole claim. Only the hooked pool keeps the accrual; the bare pool hands it to
+          whoever trades first.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Bar({ label, value, max, tone }: { label: string; value: number; max: number; tone: "mint" | "dim" }) {
+  const pct = Math.max(1.5, (value / max) * 100);
+  return (
+    <div>
+      <div className="flex items-baseline justify-between">
+        <span className="text-sm text-white/60">{label}</span>
+        <span className={`font-mono text-sm ${tone === "mint" ? "text-mint" : "text-white/40"}`}>
+          {value.toFixed(9)}
+        </span>
+      </div>
+      <div className="mt-2 h-2.5 rounded-full bg-white/5">
         <motion.div
-          className="absolute h-2 rounded-full bg-gradient-to-r from-mint/60 to-iris/60"
-          animate={{ left: `${fillLeft}%`, width: `${fillWidth}%` }}
-          transition={{ type: "spring", stiffness: 120, damping: 22 }}
+          className={`h-2.5 rounded-full ${
+            tone === "mint" ? "bg-gradient-to-r from-mint/70 to-iris/70" : "bg-white/15"
+          }`}
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ type: "spring", stiffness: 90, damping: 20 }}
         />
-        <div className="absolute left-1/2 top-1/2 h-5 w-px -translate-x-1/2 -translate-y-1/2 bg-white/40" />
-        <motion.div
-          className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2"
-          animate={{ left: `${pos}%` }}
-          transition={{ type: "spring", stiffness: 120, damping: 22 }}
-        >
-          <div className="h-4 w-4 rounded-full border-2 border-mint bg-[#05060b] shadow-[0_0_16px_rgba(94,234,212,0.6)]" />
-        </motion.div>
-      </div>
-
-      <div className="mt-2 flex justify-between font-mono text-[11px] text-white/30">
-        <span>-0.6%</span>
-        <span className="text-white/50">par</span>
-        <span>+0.6%</span>
-      </div>
-
-      <div className="mt-5 text-sm text-white/60">
-        {above && (
-          <>
-            Pool trades <span className="font-mono text-mint">{Math.abs(gapPct).toFixed(3)}%</span> above par.
-            Selling sYIELD captures the gap and pays a{" "}
-            <span className="font-mono text-mint">{feePct.toFixed(3)}%</span> surcharge straight to LPs.
-          </>
-        )}
-        {below && (
-          <>
-            Pool trades <span className="font-mono text-mint">{Math.abs(gapPct).toFixed(3)}%</span> below par.
-            Buying sYIELD captures the gap and pays a{" "}
-            <span className="font-mono text-mint">{feePct.toFixed(3)}%</span> surcharge straight to LPs.
-          </>
-        )}
-        {!above && !below && (
-          <>Pool is at par. No arbitrage exists right now, and regular trades pay nothing extra.</>
-        )}
       </div>
     </div>
   );
