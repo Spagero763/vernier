@@ -79,8 +79,8 @@ contract ForkTest is Test {
                 | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
         );
         (address hookAddr, bytes32 salt) =
-            HookMiner.find(address(this), flags, type(VernierParHook).creationCode, abi.encode(address(MANAGER)));
-        hook = new VernierParHook{salt: salt}(MANAGER);
+            HookMiner.find(address(this), flags, type(VernierParHook).creationCode, abi.encode(address(MANAGER), address(this)));
+        hook = new VernierParHook{salt: salt}(MANAGER, address(this));
         require(address(hook) == hookAddr, "hook mismatch");
 
         key = PoolKey({

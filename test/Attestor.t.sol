@@ -52,8 +52,8 @@ contract AttestorTest is Test, Deployers {
                 | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
         );
         (address hookAddr, bytes32 salt) =
-            HookMiner.find(address(this), flags, type(VernierParHook).creationCode, abi.encode(address(manager)));
-        hook = new VernierParHook{salt: salt}(IPoolManager(address(manager)));
+            HookMiner.find(address(this), flags, type(VernierParHook).creationCode, abi.encode(address(manager), address(this)));
+        hook = new VernierParHook{salt: salt}(IPoolManager(address(manager)), address(this));
         require(address(hook) == hookAddr, "hook mismatch");
 
         (parPool,) = initPool(currency0, currency1, IHooks(address(hook)), POOL_FEE, 60, SQRT_PRICE_1_1);

@@ -69,8 +69,11 @@ contract VernierParHook is BaseHook {
     event AttestorSet(PoolId indexed poolId, address indexed attestor);
     event CorrectionSuspended(PoolId indexed poolId);
 
-    constructor(IPoolManager _poolManager) BaseHook(_poolManager) {
-        owner = msg.sender;
+    /// Taken explicitly rather than from msg.sender: the hook is deployed with CREATE2 so
+    /// its address carries the permission bits, and under a broadcast that makes the
+    /// factory the caller, which would leave the hook permanently unownable.
+    constructor(IPoolManager _poolManager, address owner_) BaseHook(_poolManager) {
+        owner = owner_;
     }
 
     modifier onlyOwner() {
