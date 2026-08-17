@@ -1,79 +1,188 @@
 # Vernier
 
-**The Uniswap v4 liquidity venue for yield-bearing assets.**
-
-Vernier is a set of Uniswap v4 pools and a hook purpose-built for yield-bearing tokens (liquid staking tokens, yield-bearing stablecoins, tokenized treasuries). It reads each token's on-chain yield rate and prices it in real time, so the yield those tokens accrue is captured by liquidity providers instead of leaking to arbitrage bots.
-
----
+A Uniswap v4 venue for yield-bearing assets. It reads the rate a yield token publishes
+about itself and corrects the curve by exactly how stale that rate has made it, so accrual
+reaches liquidity providers instead of the first bot to notice.
 
 ## The problem
 
-Yield-bearing tokens have a price that drifts upward on a known, mechanical schedule as they accrue yield. Their fair value at any moment is written on-chain, in the token's own exchange rate.
+Liquid staking tokens, yield-bearing stablecoins and tokenized treasuries share a property:
+their fair price moves on a schedule the token itself publishes on-chain. `convertToAssets`
+for an ERC-4626 share, pooled ETH per share for stETH.
 
-A normal AMM ignores this. It keeps quoting the pool's old price while the token quietly accrues, leaving it underpriced. Arbitrageurs correct that gap every block and keep the difference. For yield-bearing assets this is not occasional slippage, it is a **continuous, predictable drain of the yield straight out of the LPs' pockets**. It is one of the largest and most quantifiable losses in DeFi, and it is the reason sophisticated holders are reluctant to LP their staked and yield-bearing positions.
+An AMM quotes from reserves and knows nothing about that. The token accrues, the pool keeps
+quoting yesterday's price, and someone buys the difference. For this asset class it is not
+occasional slippage. It is a continuous and entirely predictable transfer out of LP
+positions, and it is why holders are reluctant to LP staked assets.
 
-## The idea
+## Charging for the correction makes it worse
 
-The fair price of a yield-bearing token is not a mystery. It is derivable from the token's own on-chain exchange rate:
+The obvious response is a dynamic fee sized to the gap. It fails, and the repository
+measures the failure rather than asserting it.
 
-- ERC-4626 vaults (sUSDe, sDAI, and most yield stables): `convertToAssets(1e18)`
-- Liquid staking tokens (stETH / wstETH): the pooled-ETH-per-share rate
+An arbitrageur closing a gap earns roughly half of it, because the gap shrinks as they trade
+into it. A fee equal to the whole gap is therefore about twice their profit, and correcting
+the pool becomes strictly loss-making. Nobody corrects it, the gap compounds, and the fee
+climbs until the pool quotes several percent away from fair value for everyone.
 
-Vernier's hook reads that rate inside `beforeSwap` and adjusts the pool's effective price to track the accrual, so there is no stale price left to arbitrage. The yield stays with the LPs who own the liquidity. No external price oracle is required: the yield-bearing token itself is the canonical, manipulation-resistant source of truth for its own value.
+`test/RationalFlow.t.sol` runs flow that only trades when trading pays, sized to the gap
+rather than fixed. Over twelve accrual periods:
 
-```
-Yield token accrues on-chain  ──►  hook reads token's own exchange rate  ──►  pool price tracks fair value
-                                                                                        │
-                                                                          no stale price to arbitrage
-                                                                                        │
-                                                                          accrued yield stays with LPs
-```
+| | plain pool | gap-fee pool |
+|---|---|---|
+| correcting trades | 12 | 0 |
+| final distance from par | 494 pips | 49,070 pips |
 
-## Why it is different
+The design meant to protect LPs left the pool a hundred times more mispriced than doing
+nothing at all.
 
-| Approach | How it handles a yield token's drift |
+## What Vernier does instead
+
+The token publishes its rate, so the factor by which the curve has gone stale is known
+exactly. With `R0` the rate at configuration and `R` the rate now, the curve is stale by
+`m = R / R0` and by nothing else. The hook applies `m` to the curve's own price.
+
+Applying it to the curve's price rather than quoting par outright is the whole design.
+Quoting par would make this a fixed-price market maker, and the first time the token traded
+below par in a withdrawal queue, arbitrageurs would sell into the pool at par until the LPs
+were empty. Correcting by a factor leaves genuine premium or discount on the curve, still
+discoverable and still arbitrageable. Vernier removes the part of the price that is already
+public and touches nothing else.
+
+The correction lands on the leg the swapper did not specify, which is the yield token on one
+swap type and the quote on the other, so neither exact input nor exact output routes around
+it. It is settled with `poolManager.donate`, letting v4 split it across in-range liquidity.
+
+Rate movement is bounded by implied APR over elapsed time rather than per-swap step, since a
+step bound can be walked by repeated small moves. A reading past the bound is clamped rather
+than rejected: rejecting would let anyone able to disturb the rate source freeze the pool.
+
+Full derivation, including the four correction formulas and the reasoning behind each
+decision, is in [`docs/mechanism.md`](docs/mechanism.md).
+
+## Partner integrations
+
+### EigenLayer
+
+An operator set answers the one question the hook cannot answer alone: did a share price rise
+because yield accrued, or because someone donated into the vault to inflate it.
+
+| Where | What |
 |---|---|
-| Generic AMM | Ignores it; LPs bleed the yield to bots every block |
-| General MEV / auction protocols | Treat the drift as an unknown price move; fight it with auctions after the fact |
-| **Vernier** | **Knows the drift in advance from the token's own rate; prices it in so there is nothing to arbitrage** |
+| [`src/avs/RateAttestationService.sol`](src/avs/RateAttestationService.sol) | Weighted ECDSA operator set. Operators sign whether a pool's rate source can be believed; a quorum records the result. Follows the attestation shape of the Hello World sample. |
+| [`src/interfaces/IRateAttestor.sol`](src/interfaces/IRateAttestor.sol) | The whole surface an operator set is given: `isSound(poolId)`. |
+| [`src/VernierParHook.sol`](src/VernierParHook.sol), `_attestedSound` and `setAttestor` | Where the hook consults it and what it does with the answer. |
+| [`test/RateAttestationService.t.sol`](test/RateAttestationService.t.sol), [`test/Attestor.t.sol`](test/Attestor.t.sol) | Quorum, duplicate-signer padding, non-operator signatures, nonce replay, cross-deployment replay, and the hook's behaviour when the service is captured or down. |
 
-For yield-bearing assets the fair price move is deterministic. A specialized venue that reads the token's rate can neutralize the arbitrage that generalized solutions can only tax after it happens.
+Two properties are deliberate. The service can only withhold a correction, never set a
+price, so a captured operator set degrades Vernier to an ordinary AMM and can do nothing
+worse. And an attestor that reverts or has stopped reporting is treated as sound, so it
+cannot halt the venue either. Silence is not an accusation.
 
-## Why it is a venue, not just a hook
+Operator weights are set directly rather than read from a stake registry. In production they
+come from delegated stake, and the source of `operatorWeight` is the only thing that
+changes.
 
-- **A real, large market**: liquid staking tokens and yield-bearing stablecoins hold tens of billions in value. These are the assets institutions and treasuries actually hold.
-- **A clear business**: Vernier runs the pools for these assets and earns a share of the volume; LPs earn their yield plus fees instead of donating the yield to arbitrage.
-- **A durable wedge**: per-asset pricing logic, integrations with each yield token, and the LP relationships that follow.
+### Unichain
 
-## Status
+Deployed and exercised on Unichain Sepolia. [`test/Fork.t.sol`](test/Fork.t.sol) runs
+against the PoolManager deployed there rather than a fresh local one, which matters: a local
+PoolManager accepts settlement that deployed v4 rejects, so returning a hook delta without
+settling it passes locally and reverts on chain. Addresses in
+[`docs/deployments.md`](docs/deployments.md).
 
-Early development. See [`docs/architecture.md`](docs/architecture.md) for the system design, [`docs/mechanism.md`](docs/mechanism.md) for the pricing mechanism and math, and [`docs/roadmap.md`](docs/roadmap.md) for milestones.
+No other partner integrations are present.
 
-## Build
+## Live deployment
+
+Unichain Sepolia, chain id 1301.
+
+| | |
+|---|---|
+| VernierParHook | `0x62e4C0D7E1c366a219006f6034acFaa65b6A0644` |
+| RateAttestationService | `0x3E663DE490271A1D8c2F2857d82c789c931F9B24` |
+
+Two pools hold the same pair at the same fee, spacing and starting price. The only
+difference is whether the hook is attached, so the comparison can be read off-chain instead
+of taken on trust.
+
+| | Pool id |
+|---|---|
+| Vernier | `0xf1c353d3744b932bba5bc1aec3093a77f3c50ff0df11fc8995d1b25f7bb0534c` |
+| Baseline, no hook | `0xbb5701c384855eb79ff6ced1c7921235f0c3b607886c86a9c96fba24fe0f4ec1` |
+
+The hook address ends in `0644` because v4 reads a hook's permissions from its address.
+`0x644` is `AFTER_SWAP | AFTER_SWAP_RETURNS_DELTA | AFTER_ADD_LIQUIDITY |
+BEFORE_REMOVE_LIQUIDITY`, which is why deployment mines a salt.
+
+## Build and test
 
 ```shell
 forge build
 forge test
 ```
 
+`test/Fork.t.sol` forks Unichain Sepolia from a hardcoded endpoint and runs as part of the
+suite, so `forge test` needs network access. Run it alone with:
+
+```shell
+forge test --match-path test/Fork.t.sol -vv
+```
+
+Deployment and seeding, including why seed accrual is scaled to elapsed time, are in
+[`docs/deployments.md`](docs/deployments.md).
+
+## Dashboard
+
+`web/` is a Next.js app reading both pools live. It needs no environment variables;
+`NEXT_PUBLIC_RPC_URL` is optional and falls back to the public endpoint.
+
+```shell
+cd web && npm install && npm run dev
+```
+
 ## Repository layout
 
 ```
 vernier/
-├── README.md
 ├── docs/
-│   ├── architecture.md      System design, components, data flow
-│   ├── mechanism.md         Gap-priced fees, par math, redistribution
-│   ├── pitch.md             One-liner, 90-second pitch, common questions
-│   ├── deployments.md       Live addresses and reproduction steps
-│   └── roadmap.md           Build milestones
+│   ├── architecture.md      Contracts, callbacks, settlement, trust surface
+│   ├── mechanism.md         Derivation, correction formulas, measured results
+│   ├── pitch.md             The argument and the common objections
+│   ├── deployments.md       Live addresses and how to reproduce them
+│   └── roadmap.md           Built, and what is not
 ├── src/
-│   ├── VernierHook.sol        The hook: gap-priced, direction-aware fees
-│   ├── base/                Minimal v4 hook base
+│   ├── VernierParHook.sol   The hook
+│   ├── VernierHook.sol      Earlier gap-fee design, kept as the baseline
+│   ├── avs/                 Rate attestation service
 │   ├── adapters/            Rate sources (ERC-4626, stETH)
-│   ├── lib/                 Retention accounting
+│   ├── interfaces/          IRateSource, IRateAttestor
+│   ├── lib/                 Retention accounting for the fallback path
+│   ├── base/                Minimal v4 hook base
 │   └── periphery/           Minimal swap router
-├── test/                    Foundry tests incl. adversarial cases + simulation
-├── script/                  Deploy and seed scripts
-└── web/                     Live dashboard (Next.js)
+├── test/                    Unit, adversarial, simulation and fork tests
+├── script/                  Deploy, seed, and a clamp demonstration
+└── web/                     Dashboard
 ```
+
+## Limits
+
+Stated plainly because they are real.
+
+- `m` grows without bound: `R0` is never rebased, so over a long enough life the correction
+  becomes a large fraction of every trade. Rebasing it correctly means moving liquidity at
+  the same time, which is not implemented.
+- Concentrated positions are chosen in curve-price terms while execution happens at
+  `curve * m`, so a range gradually stops covering the prices its owner picked.
+- Corrections leave the pool rather than re-centering it, so anything reading `slot0` sees a
+  deliberately stale price.
+- A sharp genuine move in the rate is not absorbed on the reading that reports it. It is
+  bounded to what elapsed time justifies and tracked over subsequent swaps.
+- Coverage is scenario-based. There are no fuzz or invariant tests yet.
+
+## Prior work in this repository
+
+`src/VernierHook.sol` and its tests predate the current design. They implement the gap-fee
+mechanism and are retained because they are the baseline the measurements above are taken
+against, not because they are recommended. Their access control and rate guard have known
+weaknesses that `VernierParHook` fixes.
