@@ -1,107 +1,123 @@
 # Architecture
 
-Vernier is a Uniswap v4 hook plus a small set of internal accounting libraries, deployed alongside curated pools for yield-bearing assets. Its core path has no off-chain components. Everything needed to price a swap against fair value and retain the yield for LPs happens synchronously inside the swap lifecycle.
+Vernier is a Uniswap v4 hook, a pair of rate adapters, and an optional operator set. The
+pricing path is entirely on-chain and synchronous: everything needed to correct a swap for
+published accrual happens inside the swap that triggers it.
 
 ## 1. System context
 
 ```mermaid
 flowchart LR
-    Trader["Trader / arbitrageur"] -->|swap| PM["Uniswap v4\nPoolManager"]
+    Trader["Trader"] -->|swap| PM["Uniswap v4 PoolManager"]
     LP["Liquidity providers"] -->|add / remove liquidity| PM
-    PM <-->|hook callbacks| Vernier["Vernier Hook"]
-    Vernier -->|reads exchange rate| Token["Yield-bearing token\n(ERC-4626 vault / LST)"]
-    Vernier -->|yield retained| LP
+    PM <-->|hook callbacks| Hook["VernierParHook"]
+    Hook -->|reads exchange rate| Token["Yield token (ERC-4626 / LST)"]
+    Hook -->|donate| PM
+    Attestor["RateAttestationService (optional)"] -.->|is this rate sound| Hook
 ```
 
-The only external contract Vernier reads is the yield-bearing token itself, for its on-chain exchange rate. There is no price oracle, relayer, or keeper in the path.
+The only contract Vernier must read to price a swap is the yield token itself. There is no
+price feed, relayer, or keeper in the path. The operator set is optional and can only
+withhold a correction, never produce a price.
 
-## 2. Component view
+## 2. Contracts
 
-```mermaid
-flowchart TB
-    subgraph Hook["Vernier Hook contract"]
-        BS["beforeSwap()\nread par price, reconcile pool price, price the swap fairly"]
-        AS["afterSwap()\nmeasure retained value, update accounting"]
-        AL["afterAddLiquidity()\ntrack LP in-range exposure"]
-        RL["beforeRemoveLiquidity()\nsettle LP share + retained yield"]
-    end
-
-    subgraph Libs["Internal libraries"]
-        RATE["RateReader\nper-asset exchange-rate adapter + bounds"]
-        PRICE["ParPricing\nfair-value / par-price computation"]
-        DIST["Redistribution\nliquidity-weighted accounting"]
-    end
-
-    BS --> RATE
-    BS --> PRICE
-    BS --> DIST
-    AS --> DIST
-    AL --> DIST
-    RL --> DIST
-```
-
-| Component | Responsibility |
+| Path | Role |
 |---|---|
-| `beforeSwap` | Read the token's par price, reconcile it against the pool price, and ensure the swap executes at fair value so no accrued yield is left to arbitrage. |
-| `afterSwap` | Record value retained for LPs and update accounting. |
-| `afterAddLiquidity` | Track each LP's in-range liquidity for exposure-weighted payouts. |
-| `beforeRemoveLiquidity` | Settle an LP's accrued share on exit. |
-| `RateReader` | Per-asset adapter that returns the correct exchange rate (`convertToAssets` for ERC-4626, pooled-ETH-per-share for stETH) with per-asset safety bounds. |
-| `ParPricing` | Turns an exchange rate into the pool's fair price and the reconciliation needed. |
-| `Redistribution` | Reward-per-liquidity accumulator. |
+| `src/VernierParHook.sol` | The hook. Reads the rate, corrects the unspecified leg, settles to LPs. |
+| `src/interfaces/IRateSource.sol` | One method, `getRate()`, returning the token's own exchange rate. |
+| `src/adapters/ERC4626RateSource.sol` | `convertToAssets(1e18)` for vault shares. |
+| `src/adapters/StETHRateSource.sol` | `getPooledEthByShares(1e18)` for stETH. |
+| `src/interfaces/IRateAttestor.sol` | One method, `isSound(poolId)`. The only thing an operator set may say. |
+| `src/avs/RateAttestationService.sol` | Weighted ECDSA operator set implementing that interface. |
+| `src/lib/Retention.sol` | Accumulator used only on the fallback path, when `donate` cannot pay. |
+| `src/periphery/VernierSwapRouter.sol` | Minimal swap router used by the demo and scripts. |
+| `src/VernierHook.sol` | The earlier gap-fee design, kept as the measurement baseline. |
 
-The `RateReader` adapter pattern is deliberate: onboarding a new yield asset means writing one small adapter, which keeps the core hook asset-agnostic and is part of the venue's moat.
+Adding an asset class means writing one adapter. The hook itself stays asset-agnostic.
 
-## 3. Swap-time data flow
+## 3. Hook permissions
+
+`VernierParHook` takes four callbacks and no more.
+
+| Callback | Why |
+|---|---|
+| `afterSwap` | Both swap legs are known here. In `beforeSwap` the output does not exist yet, so the exact-output case cannot be corrected at all. |
+| `afterSwapReturnDelta` | Lets the hook take the correction out of the settled swap. |
+| `afterAddLiquidity` | Records position liquidity for the fallback accumulator. |
+| `beforeRemoveLiquidity` | Settles a position in the accumulator before it shrinks. |
+
+The hook deliberately does not use `beforeSwapReturnDelta`. Nothing about the correction
+needs to happen before the swap, and taking a delta there would add a settlement path with
+no benefit.
+
+## 4. Swap-time flow
 
 ```mermaid
 sequenceDiagram
     participant T as Trader
     participant PM as PoolManager
-    participant H as Vernier Hook
+    participant H as VernierParHook
     participant Y as Yield token
+    participant A as Attestor
 
     T->>PM: swap
-    PM->>H: beforeSwap(...)
-    H->>Y: exchangeRate()  (convertToAssets / pooled-ETH-per-share)
-    Y-->>H: current rate
-    H->>H: parPrice = ParPricing.fromRate(rate)
-    H->>H: reconcile pool price toward par (bounded)
-    H-->>PM: return (fair price / fee override)
-    PM->>PM: execute swap at fair value
-    PM->>H: afterSwap(...)
-    H->>H: credit retained yield to in-range LPs
-    H-->>PM: return
+    PM->>PM: execute against the curve
+    PM->>H: afterSwap(params, delta)
+    H->>Y: getRate()
+    Y-->>H: R
+    H->>A: isSound(poolId)
+    A-->>H: sound / not sound
+    H->>H: clamp R by implied APR, m = R / R0
+    H->>H: correct the unspecified leg if this side gained
+    H->>PM: donate(correction)
+    H-->>PM: return correction as afterSwap delta
 ```
 
-## 4. Reward accounting
+If the attestor says the rate is not sound, the hook returns a zero delta and the pool
+behaves as an ordinary AMM for that swap.
 
-Vernier uses a reward-per-liquidity accumulator so payouts are O(1) per swap and per LP:
+## 5. Settlement
 
-```
-On retaining value V with total in-range liquidity L:
-    rewardPerLiquidity += V / L
+The correction is returned as the `afterSwap` delta, which credits it to the hook, and is
+then settled with `poolManager.donate` so v4 distributes it across in-range liquidity.
+Returning a delta without settling it reverts the swap, so these two steps belong
+together.
 
-Each LP tracks:
-    owed = liquidity x (rewardPerLiquidity - rewardPerLiquidityPaid[LP])
+`donate` reverts when no liquidity is in range, which happens when a swap pushes the price
+outside every position. The hook catches that, takes custody instead, and records the
+amount against positions in `Retention` for LPs to `claim`. That accumulator is therefore
+a fallback, not the main path.
 
-On remove / claim:
-    pay owed, then set rewardPerLiquidityPaid[LP] = rewardPerLiquidity
-```
+## 6. Position attribution
 
-## 5. Trust and dependencies
+v4 reports the address that called `modifyLiquidity`, which for any periphery router is
+the router rather than the LP. Left alone, every LP behind a router collapses into a
+single position.
 
-| Dependency | Vernier uses it? |
+Routers marked with `setTrustedRouter` may name the real owner in `hookData`. Anyone else
+is taken at face value, so an untrusted caller cannot attribute liquidity to someone else's
+position.
+
+## 7. Trust surface
+
+| Dependency | Used |
 |---|---|
-| External price oracle | No |
-| Off-chain auction / relayer | No |
-| Trusted keeper / bot | No |
-| Governance for live prices | No |
-| Yield token's own on-chain rate | Yes (canonical source of truth) |
-| Curated asset onboarding | Yes (adapter + bounds per asset) |
+| External price feed | No |
+| Off-chain auction or relayer | No |
+| Keeper or bot in the pricing path | No |
+| Governance setting live prices | No |
+| Yield token's own on-chain rate | Yes, this is the price input |
+| Operator set | Optional, and may only withhold a correction |
+| Owner | Yes, for pool configuration and router trust |
 
-## 6. Non-goals
+The owner can configure pools, set the attestor, and mark routers trusted. It cannot move
+a price or take LP funds. Pool configuration is owner-gated because an unconfigured pool
+reverts every swap, so an open setter would let anyone brick a pool or pin it to a hostile
+rate source.
 
-- Vernier is not a permissionless listing venue for arbitrary tokens. It is a curated venue for vetted yield-bearing assets, which is safer and is part of the moat.
-- Vernier does not try to predict market prices. It only reads the deterministic accrual a yield token publishes about itself.
-- Vernier does not depend on any single chain feature beyond running as a v4 hook; it targets Unichain first for its liquidity and low fees.
+## 8. Non-goals
+
+- Not a permissionless listing venue. Each asset is onboarded with an adapter and bounds.
+- Not a price predictor. It reads accrual the token publishes about itself and nothing else.
+- Not a replacement for price discovery. Deviation from par stays on the curve on purpose.

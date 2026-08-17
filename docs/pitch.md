@@ -2,48 +2,109 @@
 
 ## One-liner
 
-Vernier is the liquidity venue for yield-bearing assets: it reads each token's own on-chain yield rate and makes arbitrageurs pay the gap to LPs, so the yield stays with the people who fund the market.
+Vernier is the liquidity venue for yield-bearing assets. It reads each token's own
+published exchange rate and corrects the curve by exactly how stale that rate has made it,
+so accrual reaches the people funding the market instead of the first bot to notice.
 
 ## The 90-second version
 
-Yield-bearing tokens are one of the largest asset classes in DeFi: liquid staking tokens, yield-bearing stablecoins, tokenized treasuries. Tens of billions of dollars, all with one property in common: their fair price drifts upward on a schedule the token itself publishes on-chain.
+Liquid staking tokens, yield-bearing stablecoins and tokenized treasuries share one
+property: their fair price moves on a schedule the token itself publishes on-chain.
 
-Ordinary AMMs ignore this. The pool keeps quoting a stale price while the token quietly accrues, and arbitrage bots collect the difference every single block. For these assets, LP losses are not occasional slippage. They are a continuous, predictable transfer of the yield from liquidity providers to bots. This is why sophisticated holders refuse to LP their staked positions.
+An AMM quotes from reserves and knows nothing about that. The token accrues, the pool keeps
+quoting yesterday's price, and someone buys the difference. For this asset class that is not
+occasional slippage, it is a continuous and entirely predictable transfer out of LP
+positions. It is why sophisticated holders will not LP their staked positions.
 
-Vernier fixes it at the source. Our hook reads the token's own exchange rate, computes the pool's live gap from fair value, and charges exactly that gap as a fee, only on trades that harvest it. No external oracle: the token's own accounting is the truth. No auction network, no keeper. A dust swap cannot clear the fee, ordinary flow pays nothing extra, and once the pool reaches fair value the fee is zero.
+The obvious fix is a dynamic fee sized to the gap. It does not work, and we can show that
+rather than argue it. An arbitrageur closing a gap earns roughly half of it, because the
+gap shrinks as they trade into it, so a fee equal to the whole gap makes correcting the
+pool loss-making. Nobody corrects it, the gap compounds, and the fee climbs until the pool
+quotes several percent away from fair value for everyone. Measured against flow that only
+trades when trading pays: over twelve accrual periods a plain pool attracted twelve
+correcting trades and ended 494 pips from par, while the gap-fee pool attracted none and
+ended 49,070 pips out. The design meant to protect LPs left the pool a hundred times more
+mispriced than doing nothing.
 
-The result: either nobody trades against the stale price and nothing leaks, or somebody does and the LPs are paid the exact value that used to leak. LPs are made whole in both branches.
+Vernier does not charge for the correction. It performs it. The token publishes its rate,
+so the factor by which the curve has gone stale is known exactly, and the hook applies that
+factor to the curve's own price. Accrual stops opening a gap at all.
 
-It is live: deployed, tested against adversarial cases, with per-LP attribution accounting and a real-time dashboard. In simulation, LPs keep between 0.8% and roughly 10% more per year depending on how toxic the flow is.
+The word "own" is carrying weight there. Quoting par outright would make this a fixed-price
+market maker, and the first time the token traded below par in a withdrawal queue,
+arbitrageurs would sell into the pool at par until the LPs were empty. Correcting the curve
+by a factor leaves genuine premium or discount exactly where it belongs, on the curve,
+still discoverable and still arbitrageable. Vernier removes the part of the price that is
+already public and touches nothing else.
 
-The business is the venue: curated pools for vetted yield assets, a rate adapter per asset family, and a take on the volume that flows through markets that only work because of this mechanism.
+Against an identical baseline pool: accrual arbitrage extracted 4564606161991614 from the
+plain pool and nothing from Vernier, and on organic retail flow Vernier's LPs finished 51
+basis points ahead over the same run.
+
+The business is the venue: curated pools for vetted yield assets, one small rate adapter per
+asset family, and a take on volume through markets that only work because of this
+mechanism.
 
 ## Common questions
 
-**How is this different from general MEV protection (auction protocols, batch AMMs)?**
-Those treat every price move as unknown and fight it after the fact with auctions or batching, which needs off-chain infrastructure. For yield-bearing assets the fair price move is deterministic and published by the token itself. Vernier reads it directly and neutralizes the arbitrage at the source, fully on-chain. Specialized beats general on this asset class.
+**How is this different from MEV protection or batch auctions?**
+Those treat every price move as unknown and fight it after the fact, which needs off-chain
+infrastructure. For yield-bearing assets a large share of the move is deterministic and
+already published by the token. Vernier subtracts that share on-chain and leaves the rest
+to the market. Specialised beats general on this asset class.
 
-**Why would Uniswap not just ship this natively?**
-The core protocol ships general infrastructure. This is venue work: a vetted rate adapter per asset, per-asset safety bounds, curated onboarding, and the LP relationships that follow. That is a product with an owner, not a protocol default.
+**What about a dynamic fee sized to the gap, which is simpler?**
+That is the design in `src/VernierHook.sol`, kept in this repo as the measurement baseline.
+It removes the incentive to correct the pool without putting anything in its place, and the
+numbers above are what happens next.
 
-**What if the rate feed lies or breaks?**
-The rate is the token's own accounting, not a market quote, so it cannot be moved by trading. Against a compromised or exotic token, the hook enforces a per-swap jump bound and falls back to zero surcharge if the rate call reverts or returns zero. Assets are onboarded deliberately, not permissionlessly.
+**What if the token depegs?**
+Then the curve, not the hook, prices it. The correction is a factor applied to the curve's
+price rather than a target price, so a discount to par moves the curve normally and stays
+arbitrageable. `test_marketDiscountStaysDiscoverable` asserts selling pressure still moves
+the price.
 
-**Can an attacker reset the fee with a tiny swap?**
-No. The fee is a function of the pool's live distance from par. Only volume that actually moves the pool to par reduces it. This is covered by a dedicated adversarial test.
+**What if the rate is manipulated, for instance by donating into an ERC-4626 vault?**
+The hook bounds how fast the reference may move, as an implied APR over elapsed time rather
+than a per-swap step, since a step bound can be walked by repeated small moves. Readings
+past the bound are clamped rather than rejected, because rejecting would let anyone able to
+disturb the rate source freeze the pool. An optional operator set can additionally mark a
+rate unsound, which suspends corrections.
 
-**Does the fee scare arbitrageurs away and leave the pool stale?**
-Either outcome protects LPs. If the gap goes uncorrected, the LPs are simply holding a token that is accruing value; nothing has leaked. If someone closes it, they pay the gap to LPs. The fee makes LPs indifferent between the two branches, which is exactly the point.
+**Then a real slashing is not fully absorbed straight away?**
+Correct, and the tests assert that limit rather than hiding it. A sharp move is bounded to
+what one reading can justify and tracked over subsequent swaps as the bound allows. In
+testing a 5% slash against a 20% APR bound converges on the reported rate after eight
+swaps. `test_slashedRate_boundsTheLossWithoutTrustingOneReading` fails if the loss is not
+reduced and also fails if the hook pretends to absorb a move it cannot verify.
 
-**What about ordinary traders?**
-The mispricing is directional, so only trades harvesting it pay the surcharge. Retail flow going the other way pays the pool's base rate. A trader who happens to trade in the arb direction is also the one capturing the gap's value, so the charge nets out fair.
+**What can the operator set do if it is captured?**
+Withhold corrections. Nothing else. It cannot set a price, so the worst case is that
+Vernier behaves like an ordinary AMM. An attestor that reverts or stops reporting is
+treated as sound, so it cannot halt the venue either.
+
+**Who pays the correction?**
+Whoever is on the side the curve has wrong: the buyer while the token is underpriced, the
+seller once a loss has left it overpriced. Flow the other way pays nothing, because it is
+not capturing anything.
+
+**Can exact-output swaps route around it?**
+No. The correction lands on the leg the swapper did not specify, which is the yield token
+on one swap type and the quote on the other. `test_parHook_exactOutputIsNotABypass` covers
+it.
 
 **Business model?**
-Take rate on volume through Vernier pools, curated listings for yield-asset issuers who want deep liquidity without bleeding their holders, and later a managed LP vault layer on top.
+Take rate on volume through Vernier pools, curated listings for yield-asset issuers who
+want deep liquidity without bleeding their holders, and a managed LP vault layer later.
 
 ## Proof points
 
-- Full test suite including adversarial cases (dust reset, wrong-direction flow, slashing direction flip, broken rate feed).
-- Economic simulation vs an identical baseline pool showing measurable LP uplift.
-- Live testnet deployment with seeded liquidity, real swaps, and on-chain per-LP retention attribution.
-- Real-time dashboard reading pool state and retained yield directly from the chain.
+- Rational-flow harness that trades only when trading pays, sized to the gap rather than
+  fixed, which is what exposes the failure of fee-based designs.
+- Adversarial coverage: exact-output bypass, market discount, slashing, implausible rate,
+  broken attestor, duplicate-signer quorum padding, cross-deployment attestation replay.
+- Fork tests against the PoolManager deployed on Unichain Sepolia. A local PoolManager will
+  accept settlement that deployed v4 rejects, so this is what establishes the mechanism
+  clears real accounting.
+- Stated limits in `docs/roadmap.md`, including the unbounded reference rate and range
+  drift, both of which are real and neither of which is fixed yet.

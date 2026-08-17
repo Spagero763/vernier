@@ -1,39 +1,47 @@
 # Roadmap
 
-Vernier is built in layers, so there is a working, demoable system at the end of every stage and no stage depends on the next one existing.
+## Built
 
-## Stage 0: Foundations
-- Foundry project scaffolded on the Uniswap v4 template.
-- Hook permissions wired (`beforeSwap`, `afterSwap`, `afterAddLiquidity`, `beforeRemoveLiquidity`).
-- Hook address mined so the permission bits match the deployed address (v4 requirement).
-- A pool deployed against the hook in tests, using a mock yield-bearing token.
+**Correction mechanism.** Reads the yield token's published rate, derives how stale the
+curve has become, and corrects the leg the swapper did not specify. Applies to exact input
+and exact output, and to both sides depending on which way the rate has moved.
 
-## Stage 1: Yield-aware pricing (core)
-- `RateReader` adapter for ERC-4626 (`convertToAssets`) with safety bounds.
-- `ParPricing` computes fair price from the rate.
-- `beforeSwap` reconciles the pool price toward par so accrued yield is not left to arbitrage.
-- Full Foundry tests with a mock ERC-4626 vault whose rate we advance over time: prove the arbitrage gap that exists on a plain pool is removed on a Vernier pool.
-- Deployed to Unichain Sepolia with a public address.
+**Settlement to LPs.** Corrections go through `poolManager.donate`, so v4 distributes them
+across in-range liquidity. When a swap leaves the price outside every position and there is
+nothing in range to pay, the hook holds the value and LPs claim it.
 
-Deliverable: a pool where LPs keep the yield, demonstrated against a baseline.
+**Rate bounds.** Movement is bounded by implied APR over elapsed time rather than per-swap
+step, so repeated small moves cannot ratchet the reference. Readings past the bound are
+clamped rather than rejected, so a disturbed rate source cannot freeze the pool.
 
-## Stage 2: Liquidity-weighted retention accounting
-- `afterAddLiquidity` / `beforeRemoveLiquidity` track per-LP in-range exposure.
-- Reward-per-liquidity accumulator credits retained yield by real exposure.
-- Tests: two LPs with different ranges receive correct proportional retention; claim on exit settles exactly.
+**Attestation.** A weighted ECDSA operator set can mark a pool's rate source as unsound,
+which suspends corrections. It cannot set a price, and an operator set that goes quiet is
+treated as sound.
 
-## Stage 3: Multi-asset support
-- Add an LST adapter (stETH / wstETH pooled-ETH-per-share) alongside ERC-4626.
-- Per-asset bounds and fallback behavior on stale or reverting rates.
-- Tests across both asset types.
+**Measurement.** A rational-flow harness that only trades when trading pays, used to show
+that charging for the correction stops the correction happening. Depeg and slashing
+scenarios. Fork tests against the PoolManager deployed on Unichain Sepolia.
 
-## Stage 4: Proof and presentation
-- Simulation harness: run a realistic accrual + trade sequence through a plain pool vs a Vernier pool over simulated time, report cumulative LP uplift.
-- Dashboard: live view of yield retained for LPs vs leaked on a baseline pool.
-- Written results: measured LP uplift, gas overhead, and the business case.
+## Next
 
-## Definition of done
-- Near-complete test coverage.
-- Live testnet deployment with a shown address.
-- A simulation that quantifies LP uplift vs a baseline pool over time.
-- Documentation complete (this repo).
+**Rebase the reference rate.** `m = R / R0` grows without bound because `R0` is fixed at
+configuration. Over a long enough life the correction becomes a large share of every trade
+and the curve's own price drifts arbitrarily far from the effective one. Rebasing `R0`
+correctly means moving liquidity at the same time, which is why it is not done yet.
+
+**Range semantics.** LPs choose a range in curve-price terms while execution happens at
+`curve * m`, so a position gradually stops covering the prices its owner picked. Either the
+range needs interpreting through `m` at quote time, or the interface has to present ranges
+in effective-price terms.
+
+**Re-centering.** Corrections leave the pool, so `slot0` stays deliberately stale and any
+router or aggregator reading it sees the wrong price. Using part of the correction to move
+the curve back toward par would fix that at the cost of a more complex settlement path.
+
+**Property tests.** Coverage is scenario-based. The correction formulas, the clamp, and the
+accumulator are all worth fuzzing, particularly around rounding at small trade sizes and
+extreme multipliers.
+
+**Stake-backed operators.** Operator weights are set directly. In production they should
+come from delegated stake, which changes where `operatorWeight` is read from and nothing
+else about the design.

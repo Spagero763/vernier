@@ -1,91 +1,204 @@
 # Mechanism
 
-This document describes how Vernier prices yield-bearing assets so that accrued yield is retained by liquidity providers rather than extracted by arbitrageurs.
+Vernier is a Uniswap v4 venue for yield-bearing assets. This document describes how it
+prices the accrual those assets publish, and why that is different from charging for the
+arbitrage the accrual creates.
 
-## 1. Background: why yield-bearing tokens bleed LPs
+## 1. Where the value goes today
 
-A yield-bearing token represents a claim on an underlying that grows over time:
+A yield-bearing token is a claim on an underlying that grows over time.
 
-- **sUSDe, sDAI, and most yield stables** are ERC-4626 vault shares. One share is worth `convertToAssets(1e18)` of the underlying, and that number only rises as yield accrues.
-- **stETH / wstETH** represent staked ETH. The pooled-ETH-per-share rate rises as staking rewards accrue.
+- ERC-4626 shares such as sUSDe or sDAI are worth `convertToAssets(1e18)` of the
+  underlying, and that number only rises as yield accrues.
+- stETH and wstETH represent staked ETH, and the pooled-ETH-per-share rate rises with
+  staking rewards.
 
-The token's fair value against its underlying therefore follows a smooth, upward, largely predictable path. Call this the **par price**: the value implied by the token's own on-chain exchange rate at a given moment.
+An AMM quotes from its reserves and knows nothing about this. Between swaps the token
+accrues, the pool keeps quoting the old price, and the token is left underpriced. Someone
+buys it cheap and the difference comes out of the LPs. This repeats every block, and
+unlike ordinary loss-versus-rebalancing it is entirely predictable, because the size of
+the mispricing is published on-chain by the token itself.
 
-An ordinary AMM does not know about par. It quotes a price derived only from its reserves. As the token accrues, the pool's quoted price falls behind par. The token is now underpriced in the pool, and any arbitrageur can buy it cheap and redeem or sell it at par, pocketing the accrued yield. This repeats block after block. The cumulative transfer from LPs to arbitrageurs is **loss-versus-rebalancing (LVR)**, and for yield-bearing assets it is unusually large because the mispricing regenerates continuously and predictably.
+## 2. Charging for the correction does not work
 
-## 2. The core observation
+The obvious response is a dynamic fee sized to the gap, which is what
+`src/VernierHook.sol` does and what the dynamic-fee designs in this space generally do.
+It fails, and the failure is measurable.
 
-For a generic asset, the fair price is unknown to the contract, so protocols fight LVR with oracles or auctions. For a yield-bearing token, the fair price against its underlying is **already on-chain**, published by the token itself:
+An arbitrageur closing a gap `g` does not earn `g` on their whole trade. They earn
+roughly half of it, because the gap shrinks as they trade into it. A fee equal to the full
+gap applied to the full trade is therefore around twice their profit, and correcting the
+pool becomes strictly loss-making.
 
-```
-parPrice = tokenExchangeRate()   // convertToAssets(1e18) for ERC-4626, pooled-ETH-per-share for stETH
-```
+If nobody can profit from correcting the price, nobody corrects it. The pool stays wrong,
+the gap widens with every accrual, and the fee climbs until it hits its cap. At that point
+the pool quotes several percent away from par in one direction for everyone, retail
+included, and routers stop sending flow to it.
 
-This is the canonical source of truth. It is not an external price feed that can be manipulated by a flash loan; it is the token's own accounting, which for real yield assets moves only as fast as yield actually accrues.
+`test/RationalFlow.t.sol` measures this with flow that only trades when trading pays. Over
+twelve accrual periods:
 
-Vernier uses this to remove the arbitrage at its source.
+| | plain pool | gap-fee pool |
+|---|---|---|
+| correcting trades | 12 | 0 |
+| final distance from par | 494 pips | 49,070 pips |
 
-## 3. Yield-aware pricing in beforeSwap
+The pool built to protect LPs ends a hundred times further from par than the one that does
+nothing, because it removed the incentive to fix the price without putting anything in its
+place.
 
-On each swap, before it executes, the hook:
+## 3. Pricing the staleness instead
 
-1. Reads the token's current par rate and derives the pool's fair price from it.
-2. Reads the pool's actual current price from pool state.
-3. Computes the **gap**: how far the pool is from par, and in which direction.
-4. Charges a dynamic fee equal to that gap, **only on swaps in the direction that captures the gap**. Swaps in the other direction pay no surcharge.
-
-The fee is a pure function of pool state versus par. Three properties fall out of that design:
-
-- **No dust bypass.** The fee is not based on "rate change since the last swap," so a tiny swap cannot reset anything. The fee persists until the pool price actually converges to par, because only real trading volume can move the pool there.
-- **Ordinary flow is untouched.** The mispricing is directional (the accruing token is always the underpriced side), so only trades harvesting it pay. A retail swapper going the other way pays zero surcharge. A swapper who happens to trade in the arb direction pays the gap, but they are also the one capturing the gap's value, so the charge is exactly fair.
-- **The fee self-extinguishes.** Once an arbitrage swap moves the pool to par, the gap is zero and the fee is zero. The fee equals the arb profit, no more.
-
-One conservative simplification: the fee is set from the pre-swap gap and applies to the whole swap amount. A large swap that crosses par pays the gap fee on its full size, which favors LPs; scaling the fee by only the gap-closing portion of the swap is a planned refinement.
-
-## 4. Why no external oracle is needed
-
-The only external value Vernier reads is the yield token's own `exchangeRate`-style function. This matters:
-
-- It is the definition of the token's value against its underlying, not a market quote, so it cannot be moved by trading pressure or a sandwich.
-- For reputable yield tokens it updates smoothly and monotonically, so it is safe to price against directly.
-- It removes the trust and attack surface that oracle-based MEV solutions carry.
-
-Vernier does apply standard guardrails on the rate (see Security), but it never depends on a third-party price feed.
-
-## 5. Redistribution to LPs
-
-Value that Vernier retains for LPs (whether by preventing the arb or by capturing it as a fee) is credited using a reward-per-liquidity accumulator over in-range liquidity, the same pattern well-audited staking systems use:
+The token publishes its own rate, so the amount the curve is wrong by is known exactly.
+Let `R0` be the rate when the pool was configured and `R` the rate now. The curve's quoted
+price is stale by
 
 ```
-On retaining value V with in-range liquidity L:
-    rewardPerLiquidity += V / L
-
-LP owed:
-    owed = LP.liquidity * (rewardPerLiquidity - LP.paidCheckpoint)
+m = R / R0
 ```
 
-This is exact, O(1) per swap, and weights payouts by the liquidity actually exposed.
+and by nothing else. Vernier applies `m` as a multiplicative correction to the curve's own
+price rather than replacing that price.
 
-## 6. Worked example
+This distinction is the whole design. Quoting par directly would make Vernier a
+fixed-price market maker, and the first time the token traded below par in a withdrawal
+queue or a depeg, arbitrageurs would sell into the pool at par until the LPs were empty.
+Correcting the curve by `m` leaves any genuine premium or discount to par exactly where it
+belongs, on the curve, where it can still be discovered and arbitraged.
 
-Take an sUSDe / USDC pool. Suppose sUSDe yields at a rate that accrues 0.02 percent per hour, and the pool has not traded for an hour.
+Accrual therefore stops opening a gap, while market disagreement continues to.
 
-- **On a normal AMM:** the pool still prices sUSDe at last hour's par. It is now 0.02 percent underpriced. An arbitrageur buys sUSDe from the pool and redeems it at the higher par, extracting that 0.02 percent from the LPs. Every hour, forever.
-- **On Vernier:** the hook reads sUSDe's current `convertToAssets` before the swap, sees that par has risen 0.02 percent, and prices the trade at par. The arbitrage gap is zero. The 0.02 percent accrual stays reflected in the LPs' position value.
+## 4. Which side pays
 
-Multiply 0.02 percent per hour across a year of continuous accrual on a large pool and the difference to LPs is substantial. That gap is the entire product.
+Staleness only helps the trader taking the side the curve has wrong.
 
-## 7. Security considerations
+- While `m > 1` the curve underprices the token, so the buyer gains.
+- While `m < 1`, after a slashing or a loss, the curve overprices it, so the seller gains.
 
-- **Rate manipulation:** Vernier reads the token's own exchange rate. For legitimate yield tokens this is not market-manipulable, but the hook still bounds the maximum upward rate jump it will act on, rejecting implausible moves from a compromised or exotic token.
-- **Dust-reset attacks:** an earlier design charged the fee based on the rate change since the last swap, which a 1 wei swap could reset, clearing the fee while the pool stayed mispriced. The shipped design prices the fee from the pool's live gap to par, so no swap can clear the fee without actually moving the pool to par. This is covered by a dedicated test.
-- **Direction handling under slashing:** if an LST is slashed, the pool flips from underpricing to overpricing the token, and the arb direction flips with it. The gap computation is symmetric, so the fee follows the true arb direction automatically.
-- **Stale or reverting rate:** if the rate call reverts or returns zero, the swap proceeds with no surcharge and the pool degrades to ordinary behavior rather than halting.
-- **Reentrancy and accounting:** all value movement happens inside the PoolManager unlock context using the accumulator pattern, with no external calls in the reward path.
-- **Asset onboarding:** each yield token is integrated deliberately with the correct rate function and bounds. Vernier is a curated venue, not a permissionless listing of arbitrary tokens, which is both safer and part of the moat.
+The hook corrects only that side. Flow in the other direction pays nothing, because it is
+not capturing anything.
 
-## 8. Open questions to resolve during build
+## 5. Where the correction is applied
 
-- Scale the fee by the gap-closing portion of a swap that crosses par, instead of the full amount.
-- Exact rate-jump bounds per asset class (LSTs vs vault stables differ).
-- Whether to expose captured value as auto-compounding into the LP position or as a separately claimable reward.
+The correction always lands on the leg the swapper did not specify. That leg is the yield
+token on one swap type and the quote on the other, so neither exact input nor exact output
+can route around it.
+
+With `m > 1`:
+
+```
+exact input   correction = yieldOut * (m - 1) / m      leaving the buyer yieldOut / m
+exact output  correction = quoteIn  * (m - 1)          leaving the buyer paying quoteIn * m
+```
+
+With `m < 1`:
+
+```
+exact input   correction = quoteOut * (1 - m)          leaving the seller quoteOut * m
+exact output  correction = yieldIn  * (1 - m) / m      leaving the seller paying yieldIn / m
+```
+
+This happens in `afterSwap` rather than `beforeSwap` because both legs are known exactly
+there. In `beforeSwap` the output amount does not exist yet, so a correction placed there
+can only approximate the exact-input case and cannot address exact output at all.
+
+## 6. Where the value goes
+
+The correction is settled with `poolManager.donate`, which credits fee growth and lets v4
+distribute across in-range liquidity on its own terms. A ledger maintained by the hook
+would have to answer which positions were in range at the time, and getting that wrong
+pays LPs parked far from the active tick for flow they never absorbed.
+
+`donate` reverts when a swap leaves the price outside every position, since there is then
+no in-range liquidity to receive anything. Letting that bubble up would revert the swap
+itself, so the hook instead takes custody of the correction, records it against the
+positions, and LPs withdraw it with `claim`. Covered by
+`test_heldCorrection_isClaimableWhenDonateCannotPay`.
+
+## 7. Bounding what one reading can do
+
+The rate is read from the token, not from a price feed, so it cannot be moved by trading
+pressure. It can still be wrong: an ERC-4626 share price can be inflated by donating into
+the vault, and an exotic or compromised token can report anything.
+
+The hook bounds how fast the reference may move, expressed as an implied APR over elapsed
+time rather than as a per-swap step. A step bound is not enough, because a sequence of
+moves each just under it walks the reference anywhere.
+
+A reading past the bound is clamped rather than rejected, and this is deliberate on both
+counts.
+
+- Reverting would let anyone able to disturb the rate source freeze every swap in the
+  pool, which is a worse failure than the one being guarded against.
+- Ignoring the reading entirely would switch the correction off exactly when the token is
+  repricing hardest.
+
+Clamping keeps pricing moving in the right direction while capping what any single reading
+can achieve. A genuine move is tracked over subsequent swaps as the bound allows. In
+`test_slashedRate_correctionCatchesUpOverTime` a 5% slash against a 20% APR bound is
+accepted as `1.0`, then `0.967`, and reaches the reported `0.95` after eight swaps.
+
+The consequence is honest and worth stating plainly: a sharp genuine move is not fully
+absorbed on the reading that reports it.
+`test_slashedRate_boundsTheLossWithoutTrustingOneReading` asserts both halves of that,
+failing if the loss is not reduced and also failing if the hook pretends to absorb a move
+it cannot verify.
+
+## 8. The attestation layer
+
+One question the hook cannot answer alone is whether a share price rose because yield
+accrued or because someone inflated the vault. `src/avs/RateAttestationService.sol` is an
+operator set that answers it: operators sign whether a pool's rate source can still be
+believed, and a weighted quorum records the result.
+
+Its authority is deliberately narrow. It can only withhold the correction, never set a
+price. A captured operator set therefore degrades Vernier to an ordinary AMM and can do
+nothing worse than that.
+
+It also cannot halt the venue. An attestor that reverts, or one that has stopped
+reporting, is treated as sound and the hook falls back to its own bounds. Silence is not
+an accusation.
+
+Signers must be strictly ascending, which rejects duplicates and keeps the weight tally
+honest in one pass. The chain id and the service address are in the signed digest, so an
+attestation cannot be replayed onto another deployment or another chain, and nonces must
+advance.
+
+## 9. Measured results
+
+From `test/ParHook.t.sol`, over twelve periods at 4.9% annual accrual against 100e18 of
+liquidity:
+
+| | plain pool | Vernier |
+|---|---|---|
+| value taken by accrual arbitrage | 4564606161991614 | 0 |
+| LP position on organic flow | baseline | +51 bps |
+
+From `test/Depeg.t.sol`, selling a 5% slashed token: a plain pool gives up
+`4850199725374488` while Vernier gives up `3208826579203949`, the difference being what
+the plausibility bound will justify on a single reading.
+
+From `test/Fork.t.sol`, run against the PoolManager deployed on Unichain Sepolia rather
+than a fresh one, a corrected swap raises fee growth on the corrected leg and an
+exact-output swap settles a correction of `401002104258542`. A local PoolManager will
+accept settlement that deployed v4 rejects, so these are the runs that establish the
+mechanism clears real accounting.
+
+## 10. Known limits
+
+- `m` grows without bound because `R0` is never rebased. Over a long enough life the
+  correction becomes a large fraction of every trade and the curve's own price drifts
+  arbitrarily far from the effective one. Rebasing `R0` needs to move liquidity to be
+  correct, which is not yet implemented.
+- Concentrated positions are chosen in curve-price terms while execution happens at
+  `curve * m`, so an LP's range gradually stops corresponding to the prices they picked.
+- The correction is taken out of the pool rather than used to re-center it, so anything
+  reading `slot0` sees a price that is deliberately stale.
+- Coverage is scenario-based. There are no fuzz or invariant tests yet.
+
+## 11. Relationship to the earlier design
+
+`src/VernierHook.sol` is the earlier gap-fee mechanism. It predates the current design and
+is kept because it is the benchmark the measurements in section 2 are taken against, not
+because it is recommended. Its access control and rate guard have known weaknesses that
+the current hook fixes.
