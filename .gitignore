@@ -11,11 +11,5 @@ web/.next/
 web/out/
 web/tsconfig.tsbuildinfo
 
-.claude/
-CLAUDE.md
-.agents/
-.windsurf/
-skills-lock.json
-
 .DS_Store
 Thumbs.db
