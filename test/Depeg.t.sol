@@ -127,6 +127,27 @@ contract DepegTest is Test, Deployers {
         assertApproxEqRel(accepted, vault.rate(), 0.01e18, "and should converge on it");
     }
 
+    function test_rateBound_isAdjustableAndOwnerOnly() public {
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(VernierParHook.NotOwner.selector);
+        hook.setRateBound(parPool, 500_000);
+
+        hook.setRateBound(parPool, 500_000);
+
+        // a move the old 20% bound would have clamped now lands in full
+        vm.warp(block.timestamp + PERIOD);
+        vault.accrue(20_000);
+        uint256 reported = vault.rate();
+
+        swap(parPool, true, -0.1e18, "");
+        assertEq(hook.lastRateOf(parPool.toId()), reported, "raised bound should accept the move");
+    }
+
+    function test_rateBound_cannotBeSetOnUnconfiguredPool() public {
+        vm.expectRevert(VernierParHook.PoolNotConfigured.selector);
+        hook.setRateBound(basePool, 500_000);
+    }
+
     /// A rate source that jumps implausibly must not be able to freeze the venue.
     function test_implausibleRate_degradesInsteadOfBricking() public {
         vm.warp(block.timestamp + PERIOD);

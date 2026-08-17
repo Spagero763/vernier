@@ -67,6 +67,7 @@ contract VernierParHook is BaseHook {
     event Claimed(PoolId indexed poolId, address indexed lp, uint256 amount0, uint256 amount1);
     event TrustedRouterSet(address indexed router, bool trusted);
     event AttestorSet(PoolId indexed poolId, address indexed attestor);
+    event RateBoundSet(PoolId indexed poolId, uint24 previous, uint24 current);
     event CorrectionSuspended(PoolId indexed poolId);
 
     /// Taken explicitly rather than from msg.sender: the hook is deployed with CREATE2 so
@@ -85,6 +86,17 @@ contract VernierParHook is BaseHook {
         PoolId id = key.toId();
         attestorOf[id] = attestor;
         emit AttestorSet(id, address(attestor));
+    }
+
+    /// The plausible rate of change for an asset is learned, not known at listing, so the
+    /// bound has to be adjustable. configurePool is one-shot and cannot serve for this.
+    function setRateBound(PoolKey calldata key, uint24 maxRateAprPips) external onlyOwner {
+        PoolId id = key.toId();
+        YieldConfig storage cfg = configOf[id];
+        if (!cfg.configured) revert PoolNotConfigured();
+
+        emit RateBoundSet(id, cfg.maxRateAprPips, maxRateAprPips);
+        cfg.maxRateAprPips = maxRateAprPips;
     }
 
     function setTrustedRouter(address router, bool trusted) external onlyOwner {

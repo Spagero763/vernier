@@ -13,12 +13,18 @@ import {ModifyLiquidityParams, SwapParams} from "v4-core/src/types/PoolOperation
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
+import {VernierParHook} from "../src/VernierParHook.sol";
 import {VernierSwapRouter} from "../src/periphery/VernierSwapRouter.sol";
 import {MockYieldVault} from "../test/mocks/MockYieldVault.sol";
 
 /// Seeds both pools identically, accrues yield, then trades the arb direction on each.
 /// The fee growth afterwards is the whole claim: the same accrual and the same trade
 /// leave value with the hooked pool's LPs and not with the plain pool's.
+///
+/// Accrual is scaled to the time actually elapsed. Minting a flat 0.2% on demand implies
+/// an APR in the thousands, which the hook's plausibility bound correctly refuses, and the
+/// run then measures the guard rather than the mechanism. Run this repeatedly over days to
+/// let the position build the way a real one would.
 contract Seed is Script {
     using PoolIdLibrary for PoolKey;
     using StateLibrary for IPoolManager;
@@ -30,7 +36,6 @@ contract Seed is Script {
     int24 internal constant TICK_LOWER = -600;
     int24 internal constant TICK_UPPER = 600;
     int256 internal constant LIQUIDITY = 50e18;
-    uint256 internal constant ACCRUAL_PIPS = 2_000;
     int256 internal constant TRADE = 1e17;
 
     struct Env {
@@ -77,12 +82,25 @@ contract Seed is Script {
         _addLiquidity(PoolModifyLiquidityTest(e.lpRouter), _key(c0, c1, e.hook));
         _addLiquidity(PoolModifyLiquidityTest(e.lpRouter), _key(c0, c1, address(0)));
 
-        MockYieldVault(e.vault).accrue(ACCRUAL_PIPS);
+        _accrue(e, _key(c0, c1, e.hook));
 
         // buying the now underpriced yield token is the side the stale curve favours
         bool zeroForOne = c0 == e.usdc;
         _trade(VernierSwapRouter(e.swapRouter), _key(c0, c1, e.hook), zeroForOne);
         _trade(VernierSwapRouter(e.swapRouter), _key(c0, c1, address(0)), zeroForOne);
+    }
+
+    /// Half the bound, so the demo reflects the correction rather than the clamp.
+    function _accrue(Env memory e, PoolKey memory vernierPool) internal {
+        (,, uint64 lastRateAt, uint24 maxRateAprPips,,) = VernierParHook(e.hook).configOf(vernierPool.toId());
+
+        uint256 elapsed = block.timestamp - lastRateAt;
+        uint256 pips = (uint256(maxRateAprPips) * elapsed) / (365 days) / 2;
+        if (pips == 0) pips = 1;
+
+        console.log("elapsed since last rate move (s):", elapsed);
+        console.log("accruing (pips)                 :", pips);
+        MockYieldVault(e.vault).accrue(pips);
     }
 
     function _report(Env memory e) internal view {
