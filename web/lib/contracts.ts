@@ -1,30 +1,30 @@
 export const ADDR = {
   poolManager: "0x00B036B58a818B1BC34d502D3fE730Db729e62AC",
   stateView: "0xc199f1072a74d4e905aba1a84d9a45e2546b6222",
-  hook: "0x62e4C0D7E1c366a219006f6034acFaa65b6A0644",
-  attestor: "0x3E663DE490271A1D8c2F2857d82c789c931F9B24",
-  usdc: "0xff445090472ebDA1d5b4c9e9C6C56c82831E9697",
-  syield: "0xCc18892E1ae1ECD127815916F90ce239d36e3D23",
-  vault: "0xA029fE0c6dd9CCFA6ea9C6E1d6B5D6Fc3496EA14",
-  rateSource: "0x7d06Bf495917062Fde1bB3Ace1F39C65a1aC923d",
-  lpRouter: "0x7301548d7e76001255A089FD704b47F0D07d63ee",
-  swapRouter: "0xf428f53Ab7e133C3d79d0f3dA6Cf6a9dc3D0277F",
+  hook: "0x80e4a79F2297E3CcE4F68ae535b2508187C6c644",
+  attestor: "0x415302aDd60A138c872E07019Dc9E0a77b284292",
+  usdc: "0x1b161c7dAA60bFd42c12eAAe2210bC055AC96D67",
+  syield: "0x5E393971a6C79D49F7F27C4e35bD7a18165cC0fb",
+  vault: "0xf8Cf91F9d820374e72caBEA49E0e7bD64d5a9345",
+  rateSource: "0x341c510298D21C2D0464087C3160e10B37ef88c2",
+  lpRouter: "0x19246A056E51D66BD04055E9824fb0910959E1B2",
+  swapRouter: "0xE5C05645Ffcda29616A5981aDc4E3e260Ad442b2",
 } as const;
 
 // same tokens, same fee, same spacing, same starting price: the only difference
 // between these two pools is whether the hook is attached
 export const POOL_ID =
-  "0xf1c353d3744b932bba5bc1aec3093a77f3c50ff0df11fc8995d1b25f7bb0534c" as const;
+  "0xf06ea22d2843e36aab79cad40eac4a36953fc1a1a4ae7160ffa3cda24e9e99ed" as const;
 export const BASELINE_POOL_ID =
-  "0xbb5701c384855eb79ff6ced1c7921235f0c3b607886c86a9c96fba24fe0f4ec1" as const;
+  "0x38ca13d084484b6057c433c1e6497b85fbf2f1da670c87bf269e38f925566e03" as const;
 
 export const POOL_FEE = 500;
 export const TICK_SPACING = 60;
 
-// currency0 = sYIELD (lower address), currency1 = USDC
+// currency0 = USDC (lower address), currency1 = sYIELD
 export const POOL_KEY = {
-  currency0: ADDR.syield,
-  currency1: ADDR.usdc,
+  currency0: ADDR.usdc,
+  currency1: ADDR.syield,
   fee: POOL_FEE,
   tickSpacing: TICK_SPACING,
   hooks: ADDR.hook,
@@ -35,8 +35,8 @@ export const BASELINE_POOL_KEY = {
   hooks: "0x0000000000000000000000000000000000000000",
 } as const;
 
-// the yield token sits on the currency0 side of this pool
-export const YIELD_IS_CURRENCY1 = false;
+// the yield token sits on the currency1 side of this pool
+export const YIELD_IS_CURRENCY1 = true;
 
 export const MIN_SQRT_PRICE_PLUS_ONE = 4295128740n;
 export const MAX_SQRT_PRICE_MINUS_ONE = 1461446703485210103287273052203988822378723970341n;

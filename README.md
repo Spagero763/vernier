@@ -99,8 +99,8 @@ Unichain Sepolia, chain id 1301.
 
 | | |
 |---|---|
-| VernierParHook | `0x62e4C0D7E1c366a219006f6034acFaa65b6A0644` |
-| RateAttestationService | `0x3E663DE490271A1D8c2F2857d82c789c931F9B24` |
+| VernierParHook | `0x80e4a79F2297E3CcE4F68ae535b2508187C6c644` |
+| RateAttestationService | `0x415302aDd60A138c872E07019Dc9E0a77b284292` |
 
 Two pools hold the same pair at the same fee, spacing and starting price. The only
 difference is whether the hook is attached, so the comparison can be read off-chain instead
@@ -108,10 +108,10 @@ of taken on trust.
 
 | | Pool id |
 |---|---|
-| Vernier | `0xf1c353d3744b932bba5bc1aec3093a77f3c50ff0df11fc8995d1b25f7bb0534c` |
-| Baseline, no hook | `0xbb5701c384855eb79ff6ced1c7921235f0c3b607886c86a9c96fba24fe0f4ec1` |
+| Vernier | `0xf06ea22d2843e36aab79cad40eac4a36953fc1a1a4ae7160ffa3cda24e9e99ed` |
+| Baseline, no hook | `0x38ca13d084484b6057c433c1e6497b85fbf2f1da670c87bf269e38f925566e03` |
 
-The hook address ends in `0644` because v4 reads a hook's permissions from its address.
+The hook address ends in `c644` because v4 reads a hook's permissions from its address.
 `0x644` is `AFTER_SWAP | AFTER_SWAP_RETURNS_DELTA | AFTER_ADD_LIQUIDITY |
 BEFORE_REMOVE_LIQUIDITY`, which is why deployment mines a salt.
 

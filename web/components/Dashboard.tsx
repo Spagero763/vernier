@@ -22,7 +22,6 @@ import {
   BASELINE_POOL_ID,
   BASELINE_POOL_KEY,
   MIN_SQRT_PRICE_PLUS_ONE,
-  MAX_SQRT_PRICE_MINUS_ONE,
   stalenessPips,
   maxAcceptedPips,
   hookAbi,
@@ -91,11 +90,11 @@ export function Dashboard() {
   const lastRateAt = config?.[2] ?? 0n;
   const maxAprPips = BigInt(config?.[3] ?? 0);
 
-  // the yield token is currency0 here, so the corrected leg is index 0
-  const vernYield = vernGrowth ? earned(vernGrowth[0], vernLiq) : 0n;
-  const baseYield = baseGrowth ? earned(baseGrowth[0], baseLiq) : 0n;
-  const vernQuote = vernGrowth ? earned(vernGrowth[1], vernLiq) : 0n;
-  const baseQuote = baseGrowth ? earned(baseGrowth[1], baseLiq) : 0n;
+  // the yield token is currency1 here, so the corrected leg is index 1
+  const vernYield = vernGrowth ? earned(vernGrowth[1], vernLiq) : 0n;
+  const baseYield = baseGrowth ? earned(baseGrowth[1], baseLiq) : 0n;
+  const vernQuote = vernGrowth ? earned(vernGrowth[0], vernLiq) : 0n;
+  const baseQuote = baseGrowth ? earned(baseGrowth[0], baseLiq) : 0n;
 
   // a pool with nothing in range has nothing to trade against, so a swap walks the
   // price to the tick limit and pins it there for good. never offer that trade.
@@ -183,9 +182,9 @@ export function Dashboard() {
   const tradeBoth = () =>
     run("trade", async () => {
       const params = {
-        zeroForOne: false,
+        zeroForOne: true,
         amountSpecified: -(10n ** 16n),
-        sqrtPriceLimitX96: MAX_SQRT_PRICE_MINUS_ONE,
+        sqrtPriceLimitX96: MIN_SQRT_PRICE_PLUS_ONE,
       } as const;
 
       const h = await writeContractAsync({
