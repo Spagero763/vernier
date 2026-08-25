@@ -213,6 +213,11 @@ export function Dashboard() {
               <div className="text-lg font-semibold tracking-tight">Vernier</div>
               <div className="text-xs text-white/40">Uniswap v4 hook</div>
             </div>
+            <nav className="ml-6 hidden items-center gap-5 text-sm text-white/50 sm:flex">
+              <a href="#proof" className="transition hover:text-white/80">Proof</a>
+              <a href="#try" className="transition hover:text-white/80">Try it</a>
+              <a href="#how" className="transition hover:text-white/80">How it works</a>
+            </nav>
           </div>
           {isConnected ? (
             <div className="flex items-center gap-2">
@@ -252,20 +257,9 @@ export function Dashboard() {
           Uniswap v4 hook that corrects the curve by exactly the amount the token has already announced,
           and settles the difference to the pool&apos;s liquidity providers.
         </motion.p>
-        <motion.div variants={fadeUp} className="mt-7 flex justify-center gap-3">
-          {isConnected && !poolsFunded && (
-            <div className="mt-3 text-sm text-amber-300/70">
-              Pools are unfunded, so trading is disabled. A swap against an empty pool
-              walks the price to the tick limit and cannot be undone.
-            </div>
-          )}
-          {!isConnected && (
-            <button className="btn btn-primary" onClick={() => connect({ connector: injected() })}>
-              Connect wallet
-            </button>
-          )}
-          <a href="#demo" className="btn">
-            Run the live demo
+        <motion.div variants={fadeUp} className="mt-7 flex justify-center">
+          <a href="#proof" className="btn btn-primary">
+            See it on-chain
           </a>
         </motion.div>
       </motion.section>
@@ -275,8 +269,13 @@ export function Dashboard() {
         initial="hidden"
         whileInView="show"
         viewport={{ once: true, margin: "-60px" }}
-        className="mt-12"
+        id="proof"
+        className="mt-16 scroll-mt-24"
       >
+        <SectionHeading
+          label="Proof"
+          note="Two pools on the same pair, same fee, same spacing, same starting price. The only difference is whether the hook is attached."
+        />
         <HeadToHead
           vernYield={Number(formatUnits(vernYield, 18))}
           baseYield={Number(formatUnits(baseYield, 18))}
@@ -339,12 +338,59 @@ export function Dashboard() {
       )}
 
       <motion.section
+        id="try"
+        variants={fadeUp}
+        initial="hidden"
+        whileInView="show"
+        viewport={{ once: true, margin: "-60px" }}
+        className="mt-16 scroll-mt-24"
+      >
+        <SectionHeading
+          label="Try it"
+          note="Three steps, in order. Watch the numbers above move as you go."
+        />
+        <div className="card p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div className="text-sm text-white/50">
+              Mint test tokens, accrue what elapsed time allows, then run the same trade against both pools.
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn" disabled={!isConnected || wrongChain || !!busy} onClick={getTokens}>
+                {busy === "tokens" ? "Minting…" : "1. Get test tokens"}
+              </button>
+              <button className="btn" disabled={!isConnected || wrongChain || !!busy} onClick={accrue}>
+                {busy === "accrue" ? "Accruing…" : "2. Accrue yield"}
+              </button>
+              <button
+                className="btn btn-primary"
+                disabled={!isConnected || wrongChain || !!busy || !poolsFunded}
+                onClick={tradeBoth}
+              >
+                {busy === "trade" ? "Trading…" : "3. Trade both pools"}
+              </button>
+            </div>
+          </div>
+          {isConnected && !poolsFunded && (
+            <div className="mt-3 text-sm text-amber-300/70">
+              Pools are unfunded, so trading is disabled. A swap against an empty pool
+              walks the price to the tick limit and cannot be undone.
+            </div>
+          )}
+          {!isConnected && (
+            <div className="mt-3 text-sm text-white/40">Connect a wallet on Unichain Sepolia to run the demo.</div>
+          )}
+        </div>
+      </motion.section>
+
+      <motion.section
         variants={stagger}
         initial="hidden"
         whileInView="show"
         viewport={{ once: true, margin: "-60px" }}
-        className="mt-10"
+        id="how"
+        className="mt-16 scroll-mt-24"
       >
+        <SectionHeading label="How it works" />
         <motion.div variants={fadeUp} className="card p-6 sm:p-8">
           <div className="max-w-3xl space-y-4 text-sm leading-relaxed text-white/60">
             <p>
@@ -369,55 +415,11 @@ export function Dashboard() {
       </motion.section>
 
       <motion.section
-        id="demo"
-        variants={fadeUp}
-        initial="hidden"
-        whileInView="show"
-        viewport={{ once: true, margin: "-60px" }}
-        className="mt-4 scroll-mt-24"
-      >
-        <div className="card p-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <div className="font-medium">Live demo</div>
-              <div className="text-sm text-white/50">
-                Mint test tokens, accrue what elapsed time allows, then run the same trade against both pools.
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button className="btn" disabled={!isConnected || wrongChain || !!busy} onClick={getTokens}>
-                {busy === "tokens" ? "Minting…" : "Get test tokens"}
-              </button>
-              <button className="btn" disabled={!isConnected || wrongChain || !!busy} onClick={accrue}>
-                {busy === "accrue" ? "Accruing…" : "Accrue yield"}
-              </button>
-              <button
-                className="btn btn-primary"
-                disabled={!isConnected || wrongChain || !!busy || !poolsFunded}
-                onClick={tradeBoth}
-              >
-                {busy === "trade" ? "Trading…" : "Trade both pools"}
-              </button>
-            </div>
-          </div>
-          {isConnected && !poolsFunded && (
-            <div className="mt-3 text-sm text-amber-300/70">
-              Pools are unfunded, so trading is disabled. A swap against an empty pool
-              walks the price to the tick limit and cannot be undone.
-            </div>
-          )}
-          {!isConnected && (
-            <div className="mt-3 text-sm text-white/40">Connect a wallet on Unichain Sepolia to run the demo.</div>
-          )}
-        </div>
-      </motion.section>
-
-      <motion.section
         variants={stagger}
         initial="hidden"
         whileInView="show"
         viewport={{ once: true, margin: "-40px" }}
-        className="mt-8 grid gap-3 text-sm sm:grid-cols-2"
+        className="mt-16 grid gap-3 text-sm sm:grid-cols-2"
       >
         <Addr label="Hook" addr={ADDR.hook} />
         <Addr label="Attestation service" addr={ADDR.attestor} />
@@ -541,6 +543,15 @@ function Stat({ label, value, hint }: { label: string; value: string; hint: stri
       <div className="mt-2 font-mono text-3xl font-semibold">{value}</div>
       <div className="mt-1 text-xs text-white/40">{hint}</div>
     </motion.div>
+  );
+}
+
+function SectionHeading({ label, note }: { label: string; note?: string }) {
+  return (
+    <div className="mb-5">
+      <h2 className="text-sm font-medium uppercase tracking-widest text-white/40">{label}</h2>
+      {note && <p className="mt-2 max-w-2xl text-sm text-white/50">{note}</p>}
+    </div>
   );
 }
 
