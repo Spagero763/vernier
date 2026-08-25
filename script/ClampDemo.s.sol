@@ -18,6 +18,11 @@ import {MockYieldVault} from "../test/mocks/MockYieldVault.sol";
 /// rejecting it on-chain. The RateClamped event this leaves is the evidence: a rate
 /// source cannot move the price further than elapsed time can justify, however loudly
 /// it insists otherwise.
+///
+/// The spike is reverted once the event exists. Left in place it would take the accepted
+/// rate about two years to catch up at a 20% bound, so every later swap would be throttled
+/// and the venue would sit permanently clamped. The event is the artefact worth keeping,
+/// not the state.
 contract ClampDemo is Script {
     using PoolIdLibrary for PoolKey;
 
@@ -59,12 +64,18 @@ contract ClampDemo is Script {
             })
         );
 
+        uint256 spiked = MockYieldVault(vault).rate();
+
+        // the event is permanent, the distorted rate should not be
+        MockYieldVault(vault).setRate(before);
+
         vm.stopBroadcast();
 
         console.log("rate before          :", before);
-        console.log("rate now reported    :", MockYieldVault(vault).rate());
+        console.log("rate reported (spike):", spiked);
+        console.log("rate restored to     :", MockYieldVault(vault).rate());
         console.log("accepted before      :", accepted);
         console.log("accepted after       :", VernierParHook(hookAddr).lastRateOf(key.toId()));
-        console.log("check the RateClamped event on the hook for the rejected reading");
+        console.log("RateClamped on the hook records the reading that was refused");
     }
 }
