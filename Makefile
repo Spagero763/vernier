@@ -6,10 +6,15 @@ EXPLORER_API ?= https://unichain-sepolia.blockscout.com/api
 BROADCAST = --rpc-url $(RPC) --account $(ACCOUNT) --sender $(SENDER) --broadcast
 VERIFY = --verifier blockscout --verifier-url $(EXPLORER_API) --compiler-version 0.8.26 --watch
 
-.PHONY: test cov seed seed-dry clamp deploy faucet state journey fresh
+.PHONY: test proof cov seed seed-dry clamp deploy faucet state journey fresh
 
 test:
 	forge test
+
+# plain `forge test` hides console output, so the measured numbers never appear.
+# this is the one that shows why charging for the correction fails.
+proof:
+	forge test --match-path test/RationalFlow.t.sol -vv
 
 cov:
 	forge coverage --no-match-path "test/Fork.t.sol" --report summary
