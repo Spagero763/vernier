@@ -110,15 +110,6 @@ body {
     linear-gradient(120deg, rgba(94, 234, 212, 0.5), rgba(139, 139, 247, 0.5)) border-box;
 }
 
-.grad-text {
-  background: linear-gradient(90deg, #5eead4, #8b8bf7, #5eead4);
-  background-size: 200% auto;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: sheen 9s linear infinite;
-}
-
 @keyframes sheen {
   to {
     background-position: 200% center;

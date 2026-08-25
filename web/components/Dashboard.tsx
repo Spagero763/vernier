@@ -241,11 +241,12 @@ export function Dashboard() {
           variants={fadeUp}
           className="mx-auto mt-6 max-w-3xl text-4xl font-semibold leading-tight tracking-tight sm:text-5xl"
         >
-          The liquidity venue for <span className="grad-text">yield-bearing assets</span>
+          Your pool is quoting yesterday&apos;s price
         </motion.h1>
         <motion.p variants={fadeUp} className="mx-auto mt-4 max-w-2xl text-white/60">
-          A yield token publishes the rate at which it appreciates. Vernier corrects the curve by exactly
-          that much, so accrual reaches liquidity providers instead of the first bot to notice.
+          A yield-bearing token publishes the rate at which it appreciates. The pool holding it does not
+          read that rate, so it keeps quoting the old price until someone buys the difference. Vernier
+          corrects the curve by exactly the amount the token has already announced.
         </motion.p>
         <motion.div variants={fadeUp} className="mt-7 flex justify-center gap-3">
           {isConnected && !poolsFunded && (
@@ -338,23 +339,29 @@ export function Dashboard() {
         initial="hidden"
         whileInView="show"
         viewport={{ once: true, margin: "-60px" }}
-        className="mt-10 grid gap-4 sm:grid-cols-3"
+        className="mt-10"
       >
-        <Step
-          n="01"
-          title="Read the rate"
-          body="The hook reads the yield token's own exchange rate. No feed, no keeper, nothing that trading pressure can move."
-        />
-        <Step
-          n="02"
-          title="Correct the curve"
-          body="Accrual makes the curve stale by a known factor. The hook applies that factor to the leg the swapper did not specify, so accrual stops opening a gap while real market moves stay on the curve."
-        />
-        <Step
-          n="03"
-          title="Settle to LPs"
-          body="The correction is donated into fee growth, which v4 already splits across in-range liquidity. Nothing is left for an arbitrageur to collect."
-        />
+        <motion.div variants={fadeUp} className="card p-6 sm:p-8">
+          <div className="max-w-3xl space-y-4 text-sm leading-relaxed text-white/60">
+            <p>
+              The rate comes from the token itself, <span className="font-mono text-white/80">convertToAssets</span> on
+              an ERC-4626 share or pooled ETH per share on stETH. No feed, no keeper, and nothing that trading
+              pressure can move.
+            </p>
+            <p>
+              Accrual makes the curve stale by a factor that is already public, so the hook applies that factor
+              rather than quoting a target price. Quoting par outright would make this a fixed-price maker, and
+              the first time the token traded at a discount it would be drained. Correcting by a factor leaves
+              genuine market moves on the curve where they belong.
+            </p>
+            <p>
+              The correction lands on the leg the swapper did not specify, so neither exact input nor exact
+              output routes around it, and it settles through{" "}
+              <span className="font-mono text-white/80">donate</span> so v4 splits it across in-range liquidity
+              on its own terms.
+            </p>
+          </div>
+        </motion.div>
       </motion.section>
 
       <motion.section
@@ -526,16 +533,6 @@ function Stat({ label, value, hint }: { label: string; value: string; hint: stri
       <div className="text-sm text-white/50">{label}</div>
       <div className="mt-2 font-mono text-3xl font-semibold">{value}</div>
       <div className="mt-1 text-xs text-white/40">{hint}</div>
-    </motion.div>
-  );
-}
-
-function Step({ n, title, body }: { n: string; title: string; body: string }) {
-  return (
-    <motion.div variants={fadeUp} className="card card-hover p-6">
-      <div className="font-mono text-xs text-mint">{n}</div>
-      <div className="mt-2 font-medium">{title}</div>
-      <div className="mt-2 text-sm leading-relaxed text-white/55">{body}</div>
     </motion.div>
   );
 }
