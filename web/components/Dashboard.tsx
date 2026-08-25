@@ -209,7 +209,10 @@ export function Dashboard() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Logo className="h-9 w-9" />
-            <span className="text-lg font-semibold tracking-tight">Vernier</span>
+            <div className="leading-tight">
+              <div className="text-lg font-semibold tracking-tight">Vernier</div>
+              <div className="text-xs text-white/40">Uniswap v4 hook</div>
+            </div>
           </div>
           {isConnected ? (
             <div className="flex items-center gap-2">
@@ -245,8 +248,9 @@ export function Dashboard() {
         </motion.h1>
         <motion.p variants={fadeUp} className="mx-auto mt-4 max-w-2xl text-white/60">
           A yield-bearing token publishes the rate at which it appreciates. The pool holding it does not
-          read that rate, so it keeps quoting the old price until someone buys the difference. Vernier
-          corrects the curve by exactly the amount the token has already announced.
+          read that rate, so it keeps quoting the old price until someone buys the difference. Vernier is a
+          Uniswap v4 hook that corrects the curve by exactly the amount the token has already announced,
+          and settles the difference to the pool&apos;s liquidity providers.
         </motion.p>
         <motion.div variants={fadeUp} className="mt-7 flex justify-center gap-3">
           {isConnected && !poolsFunded && (
@@ -415,24 +419,27 @@ export function Dashboard() {
         viewport={{ once: true, margin: "-40px" }}
         className="mt-8 grid gap-3 text-sm sm:grid-cols-2"
       >
-        <Addr label="VernierParHook" addr={ADDR.hook} />
-        <Addr label="Rate attestation service" addr={ADDR.attestor} />
-        <Addr label="Yield token (sYIELD)" addr={ADDR.syield} />
-        <Addr label="Rate source" addr={ADDR.rateSource} />
+        <Addr label="Hook" addr={ADDR.hook} />
+        <Addr label="Attestation service" addr={ADDR.attestor} />
       </motion.section>
 
-      <footer className="mt-10 flex items-center justify-center gap-2 text-xs text-white/30">
-        <span>Built on Uniswap v4</span>
-        <span>·</span>
-        <span>Unichain Sepolia</span>
-        <span>·</span>
+      <footer className="mt-10 flex items-center justify-center gap-3 text-xs text-white/30">
         <a
-          href={`${EXPLORER}/address/${ADDR.hook}`}
+          href="https://github.com/Spagero763/vernier"
           target="_blank"
           rel="noreferrer"
-          className="font-mono transition hover:text-white/60"
+          className="transition hover:text-white/60"
         >
-          pool {short(POOL_ID)}
+          Source
+        </a>
+        <span>/</span>
+        <a
+          href={`${EXPLORER}/address/${ADDR.hook}?tab=contract`}
+          target="_blank"
+          rel="noreferrer"
+          className="transition hover:text-white/60"
+        >
+          Verified contract
         </a>
       </footer>
 
@@ -541,7 +548,7 @@ function Addr({ label, addr }: { label: string; addr: string }) {
   return (
     <motion.a
       variants={fadeUp}
-      href={`${EXPLORER}/address/${addr}`}
+      href={`${EXPLORER}/address/${addr}?tab=contract`}
       target="_blank"
       rel="noreferrer"
       className="card flex items-center justify-between p-4 transition hover:border-mint/40"
