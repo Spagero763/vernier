@@ -6,7 +6,7 @@ EXPLORER_API ?= https://unichain-sepolia.blockscout.com/api
 BROADCAST = --rpc-url $(RPC) --account $(ACCOUNT) --sender $(SENDER) --broadcast
 VERIFY = --verifier blockscout --verifier-url $(EXPLORER_API) --compiler-version 0.8.26 --watch
 
-.PHONY: test cov seed seed-dry clamp deploy state fresh
+.PHONY: test cov seed seed-dry clamp deploy state journey fresh
 
 test:
 	forge test
@@ -32,6 +32,11 @@ deploy:
 
 state:
 	@bash script/state.sh
+
+# walks the dashboard's path as a wallet that has never touched the venue.
+# if this reverts, a visitor clicking the same buttons gets the same revert
+journey:
+	forge script script/UserJourney.s.sol:UserJourney --rpc-url $(RPC)
 
 # forge caches chain state per network. after a redeploy it will insist the new
 # contracts do not exist until this is cleared
