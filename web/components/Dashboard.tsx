@@ -97,6 +97,10 @@ export function Dashboard() {
   const vernQuote = vernGrowth ? earned(vernGrowth[1], vernLiq) : 0n;
   const baseQuote = baseGrowth ? earned(baseGrowth[1], baseLiq) : 0n;
 
+  // a pool with nothing in range has nothing to trade against, so a swap walks the
+  // price to the tick limit and pins it there for good. never offer that trade.
+  const poolsFunded = vernLiq > 0n && baseLiq > 0n;
+
   const keptNum = Number(formatUnits(vernYield - baseYield, 18));
   const acceptedPct = Number(stalenessPips(referenceRate, accepted)) / 10_000;
   const reportedPct = Number(stalenessPips(referenceRate, reported)) / 10_000;
@@ -251,6 +255,12 @@ export function Dashboard() {
           that much, so accrual reaches liquidity providers instead of the first bot to notice.
         </motion.p>
         <motion.div variants={fadeUp} className="mt-7 flex justify-center gap-3">
+          {isConnected && !poolsFunded && (
+            <div className="mt-3 text-sm text-amber-300/70">
+              Pools are unfunded, so trading is disabled. A swap against an empty pool
+              walks the price to the tick limit and cannot be undone.
+            </div>
+          )}
           {!isConnected && (
             <button className="btn btn-primary" onClick={() => connect({ connector: injected() })}>
               Connect wallet
@@ -379,13 +389,19 @@ export function Dashboard() {
               </button>
               <button
                 className="btn btn-primary"
-                disabled={!isConnected || wrongChain || !!busy}
+                disabled={!isConnected || wrongChain || !!busy || !poolsFunded}
                 onClick={tradeBoth}
               >
                 {busy === "trade" ? "Trading…" : "Trade both pools"}
               </button>
             </div>
           </div>
+          {isConnected && !poolsFunded && (
+            <div className="mt-3 text-sm text-amber-300/70">
+              Pools are unfunded, so trading is disabled. A swap against an empty pool
+              walks the price to the tick limit and cannot be undone.
+            </div>
+          )}
           {!isConnected && (
             <div className="mt-3 text-sm text-white/40">Connect a wallet on Unichain Sepolia to run the demo.</div>
           )}

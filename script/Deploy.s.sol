@@ -6,6 +6,7 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
@@ -31,6 +32,10 @@ contract Deploy is Script {
     uint24 internal constant MAX_RATE_APR_PIPS = 200_000;
     uint16 internal constant QUORUM_BPS = 6667;
     uint64 internal constant FRESHNESS_WINDOW = 1 hours;
+
+    int24 internal constant TICK_LOWER = -600;
+    int24 internal constant TICK_UPPER = 600;
+    int256 internal constant INITIAL_LIQUIDITY = 50e18;
 
     struct Deployment {
         address hook;
@@ -98,6 +103,28 @@ contract Deploy is Script {
         hook.configurePool(vernierPool, IRateSource(d.source), MAX_RATE_APR_PIPS, yieldIsCurrency1);
         hook.setAttestor(vernierPool, IRateAttestor(d.attestor));
         hook.setTrustedRouter(d.lpRouter, true);
+
+        _seedInitial(d, vernierPool, basePool);
+    }
+
+    /// An empty pool has nothing to trade against, so the first swap walks the price to
+    /// the tick limit and pins it there permanently. Both pools are funded here so they
+    /// are never reachable in that state.
+    function _seedInitial(Deployment memory d, PoolKey memory vernierPool, PoolKey memory basePool) internal {
+        MockERC20(d.usdc).mint(msg.sender, 1_000_000e18);
+        MockERC20(d.syield).mint(msg.sender, 1_000_000e18);
+        MockERC20(d.usdc).approve(d.lpRouter, type(uint256).max);
+        MockERC20(d.syield).approve(d.lpRouter, type(uint256).max);
+
+        ModifyLiquidityParams memory params = ModifyLiquidityParams({
+            tickLower: TICK_LOWER,
+            tickUpper: TICK_UPPER,
+            liquidityDelta: INITIAL_LIQUIDITY,
+            salt: 0
+        });
+
+        PoolModifyLiquidityTest(d.lpRouter).modifyLiquidity(vernierPool, params, "");
+        PoolModifyLiquidityTest(d.lpRouter).modifyLiquidity(basePool, params, "");
     }
 
     function _key(address c0, address c1, address hookAddr) internal pure returns (PoolKey memory) {
