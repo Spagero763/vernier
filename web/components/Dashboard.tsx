@@ -236,13 +236,7 @@ export function Dashboard() {
         </div>
       </header>
 
-      <motion.section variants={stagger} initial="hidden" animate="show" className="mt-14 text-center">
-        <motion.div variants={fadeUp} className="flex justify-center">
-          <span className="pill">
-            <span className="dot-live" />
-            Live on Unichain Sepolia
-          </span>
-        </motion.div>
+      <motion.section variants={stagger} initial="hidden" animate="show" className="mt-20 text-center">
         <motion.h1
           variants={fadeUp}
           className="mx-auto mt-6 max-w-3xl text-4xl font-semibold leading-tight tracking-tight sm:text-5xl"
@@ -476,7 +470,6 @@ function HeadToHead({
     <div className="card p-6 sm:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <span className="dot-live" />
           <span className="font-medium">Two pools, one difference</span>
           <span className="text-sm text-white/40">same pair, fee, spacing and start price</span>
         </div>

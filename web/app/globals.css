@@ -163,18 +163,6 @@ body {
   background: linear-gradient(90deg, rgba(94, 234, 212, 0.28), rgba(139, 139, 247, 0.28));
 }
 
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  border-radius: 9999px;
-  border: 1px solid rgba(94, 234, 212, 0.25);
-  background: rgba(94, 234, 212, 0.06);
-  padding: 0.35rem 0.9rem;
-  font-size: 0.8rem;
-  color: rgba(231, 233, 238, 0.75);
-}
-
 .dot-live {
   width: 0.5rem;
   height: 0.5rem;
