@@ -93,6 +93,28 @@ settling it passes locally and reverts on chain. Addresses in
 
 No other partner integrations are present.
 
+## Routing and quoting
+
+The Uniswap interface will not route these pools natively. The hook returns an
+`afterSwap` delta, so execution differs from what the curve alone implies, and the
+interface does not route pools whose output it cannot derive from the curve.
+
+That is a property of the mechanism rather than a gap in it, and it does not make the
+pool opaque. The v4 Quoter simulates hooks, so an integrator prices a swap correctly
+before sending it. [`test/Quoter.t.sol`](test/Quoter.t.sol) asserts the quote equals
+execution to the wei on both swap types:
+
+| | |
+|---|---|
+| quoted output | 985666194671114797 |
+| actually received | 985666194671114797 |
+| quoted input, exact output | 1014648738510669477 |
+| actually paid | 1014648738510669477 |
+| correction visible in the quote | 3942664778684459 |
+
+The correction is priced into the quote rather than hidden from it, so an integrator
+sees what a swap costs before committing to it.
+
 ## Live deployment
 
 Unichain Sepolia, chain id 1301.
