@@ -9,6 +9,7 @@ export const ADDR = {
   rateSource: "0x341c510298D21C2D0464087C3160e10B37ef88c2",
   lpRouter: "0x19246A056E51D66BD04055E9824fb0910959E1B2",
   swapRouter: "0xE5C05645Ffcda29616A5981aDc4E3e260Ad442b2",
+  faucet: "0x7E2A72DD416fa4EE88Fd4e4ec28dcdB53d45e0f9",
 } as const;
 
 // same tokens, same fee, same spacing, same starting price: the only difference
@@ -159,6 +160,16 @@ export function maxAcceptedPips(maxRateAprPips: bigint, elapsedSeconds: bigint):
   const YEAR = 31_536_000n;
   return (maxRateAprPips * elapsedSeconds) / YEAR;
 }
+
+export const faucetAbi = [
+  {
+    type: "function",
+    name: "claim",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+] as const;
 
 export const vaultAbi = [
   {

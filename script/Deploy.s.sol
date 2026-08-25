@@ -15,6 +15,7 @@ import {HookMiner} from "v4-periphery/test/shared/HookMiner.sol";
 import {VernierParHook} from "../src/VernierParHook.sol";
 import {RateAttestationService} from "../src/avs/RateAttestationService.sol";
 import {VernierSwapRouter} from "../src/periphery/VernierSwapRouter.sol";
+import {Faucet} from "../src/periphery/Faucet.sol";
 import {ERC4626RateSource} from "../src/adapters/ERC4626RateSource.sol";
 import {IRateSource} from "../src/interfaces/IRateSource.sol";
 import {IRateAttestor} from "../src/interfaces/IRateAttestor.sol";
@@ -46,6 +47,7 @@ contract Deploy is Script {
         address source;
         address lpRouter;
         address swapRouter;
+        address faucet;
     }
 
     function run() external {
@@ -65,6 +67,7 @@ contract Deploy is Script {
         console.log("RateSource      :", d.source);
         console.log("lpRouter        :", d.lpRouter);
         console.log("swapRouter      :", d.swapRouter);
+        console.log("Faucet          :", d.faucet);
         console.log("yieldIsCurrency1:", yieldIsCurrency1);
     }
 
@@ -87,6 +90,7 @@ contract Deploy is Script {
         d.source = address(new ERC4626RateSource(d.vault));
         d.lpRouter = address(new PoolModifyLiquidityTest(IPoolManager(poolManager)));
         d.swapRouter = address(new VernierSwapRouter(IPoolManager(poolManager)));
+        d.faucet = address(new Faucet(d.usdc, d.syield));
     }
 
     function _wire(address poolManager, Deployment memory d) internal returns (bool yieldIsCurrency1) {

@@ -28,6 +28,7 @@ import {
   stateViewAbi,
   vaultAbi,
   erc20Abi,
+  faucetAbi,
   swapRouterAbi,
 } from "@/lib/contracts";
 import { Counter } from "./Counter";
@@ -59,6 +60,7 @@ export function Dashboard() {
   const { switchChain } = useSwitchChain();
   const { writeContractAsync } = useWriteContract();
   const [busy, setBusy] = useState<string | null>(null);
+  const [step, setStep] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast>(null);
 
   const wrongChain = isConnected && chainId !== unichainSepolia.id;
@@ -113,6 +115,7 @@ export function Dashboard() {
     try {
       setBusy(label);
       setToast({ kind: "pending", text: "Confirm in your wallet, then waiting on-chain" });
+      setStep(null);
       const hash = await fn();
       await waitForTransactionReceipt(wagmiConfig, { hash });
       await refetch();
@@ -124,40 +127,26 @@ export function Dashboard() {
       setTimeout(() => setToast((t) => (t?.kind === "err" ? null : t)), 4000);
     } finally {
       setBusy(null);
+      setStep(null);
     }
   }
 
+  // two prompts, not four: the faucet mints both tokens in one call, and the demo
+  // trade only ever sells the quote token, so the yield token needs no approval
   const getTokens = () =>
     run("tokens", async () => {
-      const steps = [
-        () =>
-          writeContractAsync({
-            address: ADDR.usdc,
-            abi: erc20Abi,
-            functionName: "mint",
-            args: [address!, parseUnits("1000", 18)],
-          }),
-        () =>
-          writeContractAsync({
-            address: ADDR.syield,
-            abi: erc20Abi,
-            functionName: "mint",
-            args: [address!, parseUnits("1000", 18)],
-          }),
-        () =>
-          writeContractAsync({
-            address: ADDR.usdc,
-            abi: erc20Abi,
-            functionName: "approve",
-            args: [ADDR.swapRouter, 2n ** 255n],
-          }),
-      ];
-      for (const step of steps) {
-        const h = await step();
-        await waitForTransactionReceipt(wagmiConfig, { hash: h });
-      }
+      setStep("Claiming tokens (1 of 2)");
+      const claim = await writeContractAsync({
+        address: ADDR.faucet,
+        abi: faucetAbi,
+        functionName: "claim",
+      });
+      await waitForTransactionReceipt(wagmiConfig, { hash: claim });
+
+      // the demo trade sells the quote token, so only that side needs an allowance
+      setStep("Approving the router (2 of 2)");
       return writeContractAsync({
-        address: ADDR.syield,
+        address: ADDR.usdc,
         abi: erc20Abi,
         functionName: "approve",
         args: [ADDR.swapRouter, 2n ** 255n],
@@ -347,39 +336,46 @@ export function Dashboard() {
       >
         <SectionHeading
           label="Try it"
-          note="Three steps, in order. Watch the numbers above move as you go."
+          note="Three steps. Each one changes a number above, and the point is which pool the change lands in."
         />
-        <div className="card p-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="text-sm text-white/50">
-              Mint test tokens, accrue what elapsed time allows, then run the same trade against both pools.
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button className="btn" disabled={!isConnected || wrongChain || !!busy} onClick={getTokens}>
-                {busy === "tokens" ? "Minting…" : "1. Get test tokens"}
-              </button>
-              <button className="btn" disabled={!isConnected || wrongChain || !!busy} onClick={accrue}>
-                {busy === "accrue" ? "Accruing…" : "2. Accrue yield"}
-              </button>
-              <button
-                className="btn btn-primary"
-                disabled={!isConnected || wrongChain || !!busy || !poolsFunded}
-                onClick={tradeBoth}
-              >
-                {busy === "trade" ? "Trading…" : "3. Trade both pools"}
-              </button>
-            </div>
-          </div>
-          {isConnected && !poolsFunded && (
-            <div className="mt-3 text-sm text-amber-300/70">
-              Pools are unfunded, so trading is disabled. A swap against an empty pool
-              walks the price to the tick limit and cannot be undone.
-            </div>
-          )}
-          {!isConnected && (
-            <div className="mt-3 text-sm text-white/40">Connect a wallet on Unichain Sepolia to run the demo.</div>
-          )}
+        <div className="card divide-y divide-white/5 p-0">
+          <Walk
+            n={1}
+            title="Claim test tokens"
+            does="Mints demo USDC and sYIELD to your wallet, then approves the router to spend the USDC."
+            watch="Nothing on-chain changes yet. This just funds you."
+            cta="Claim"
+            busyLabel={busy === "tokens" ? step ?? "Working" : null}
+            disabled={!isConnected || wrongChain || !!busy}
+            onClick={getTokens}
+          />
+          <Walk
+            n={2}
+            title="Let the token accrue"
+            does="Advances the vault's exchange rate, which is what a yield-bearing token does on its own schedule."
+            watch="Reported rate rises. Neither pool has noticed: both still quote the old price, and the gap is now real."
+            cta="Accrue"
+            busyLabel={busy === "accrue" ? "Accruing" : null}
+            disabled={!isConnected || wrongChain || !!busy}
+            onClick={accrue}
+          />
+          <Walk
+            n={3}
+            title="Trade both pools"
+            does="Runs the identical swap against the hooked pool and the bare one."
+            watch="Accrual kept by LPs moves on the hooked pool and stays at zero on the bare one. That difference is the whole mechanism."
+            cta="Trade"
+            busyLabel={busy === "trade" ? "Trading" : null}
+            disabled={!isConnected || wrongChain || !!busy || !poolsFunded}
+            onClick={tradeBoth}
+            blocked={isConnected && !poolsFunded ? "Pools report no liquidity, so trading is disabled. A swap against an empty pool walks the price to the tick limit and cannot be undone." : undefined}
+          />
         </div>
+        {!isConnected && (
+          <div className="mt-3 text-sm text-white/40">
+            Connect a wallet on Unichain Sepolia to run this. Everything above reads without one.
+          </div>
+        )}
       </motion.section>
 
       <motion.section
@@ -460,7 +456,7 @@ export function Dashboard() {
               )}
               {toast.kind === "ok" && <span className="dot-live" />}
               {toast.kind === "err" && <span className="h-2 w-2 rounded-full bg-red-400" />}
-              <span className="text-white/80">{toast.text}</span>
+              <span className="text-white/80">{step ?? toast.text}</span>
             </div>
           </motion.div>
         )}
@@ -543,6 +539,48 @@ function Stat({ label, value, hint }: { label: string; value: string; hint: stri
       <div className="mt-2 font-mono text-3xl font-semibold">{value}</div>
       <div className="mt-1 text-xs text-white/40">{hint}</div>
     </motion.div>
+  );
+}
+
+function Walk({
+  n,
+  title,
+  does,
+  watch,
+  cta,
+  busyLabel,
+  disabled,
+  onClick,
+  blocked,
+}: {
+  n: number;
+  title: string;
+  does: string;
+  watch: string;
+  cta: string;
+  busyLabel: string | null;
+  disabled: boolean;
+  onClick: () => void;
+  blocked?: string;
+}) {
+  return (
+    <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:gap-5">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/10 font-mono text-xs text-white/50">
+        {n}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="font-medium">{title}</div>
+        <div className="mt-1 text-sm text-white/50">{does}</div>
+        <div className="mt-2 text-sm text-white/40">
+          <span className="text-white/30">Watch: </span>
+          {watch}
+        </div>
+        {blocked && <div className="mt-2 text-sm text-amber-300/70">{blocked}</div>}
+      </div>
+      <button className="btn shrink-0 sm:w-40" disabled={disabled} onClick={onClick}>
+        {busyLabel ? `${busyLabel}…` : cta}
+      </button>
+    </div>
   );
 }
 

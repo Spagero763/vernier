@@ -6,7 +6,7 @@ EXPLORER_API ?= https://unichain-sepolia.blockscout.com/api
 BROADCAST = --rpc-url $(RPC) --account $(ACCOUNT) --sender $(SENDER) --broadcast
 VERIFY = --verifier blockscout --verifier-url $(EXPLORER_API) --compiler-version 0.8.26 --watch
 
-.PHONY: test cov seed seed-dry clamp deploy state journey fresh
+.PHONY: test cov seed seed-dry clamp deploy faucet state journey fresh
 
 test:
 	forge test
@@ -29,6 +29,9 @@ clamp:
 deploy:
 	forge clean
 	forge script script/Deploy.s.sol:Deploy $(BROADCAST)
+
+faucet:
+	forge script script/DeployFaucet.s.sol:DeployFaucet $(BROADCAST)
 
 state:
 	@bash script/state.sh
