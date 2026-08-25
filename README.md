@@ -99,8 +99,10 @@ Unichain Sepolia, chain id 1301.
 
 | | |
 |---|---|
-| VernierParHook | `0x80e4a79F2297E3CcE4F68ae535b2508187C6c644` |
-| RateAttestationService | `0x415302aDd60A138c872E07019Dc9E0a77b284292` |
+| VernierParHook | [`0x80e4a79F2297E3CcE4F68ae535b2508187C6c644`](https://unichain-sepolia.blockscout.com/address/0x80e4a79F2297E3CcE4F68ae535b2508187C6c644) |
+| RateAttestationService | [`0x415302aDd60A138c872E07019Dc9E0a77b284292`](https://unichain-sepolia.blockscout.com/address/0x415302aDd60A138c872E07019Dc9E0a77b284292) |
+
+Both verified, so the live configuration is readable from the explorer directly.
 
 Two pools hold the same pair at the same fee, spacing and starting price. The only
 difference is whether the hook is attached, so the comparison can be read off-chain instead

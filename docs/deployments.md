@@ -47,7 +47,27 @@ so the first swap walks the price to the tick limit and pins it there with no li
 left to trade back through. Bringing a pool up empty is not a recoverable state.
 
 RPC: `https://sepolia.unichain.org`
-Explorer: `https://sepolia.uniscan.xyz`
+Explorer: `https://unichain-sepolia.blockscout.com`
+
+### Verified source
+
+Every contract is verified, so the live configuration can be read from the explorer
+without an RPC or the dashboard. `configOf` gives the reference rate and the APR bound,
+`lastRateOf` gives the rate actually accepted after clamping.
+
+| Contract | |
+|---|---|
+| VernierParHook | https://unichain-sepolia.blockscout.com/address/0x80e4a79F2297E3CcE4F68ae535b2508187C6c644 |
+| RateAttestationService | https://unichain-sepolia.blockscout.com/address/0x415302aDd60A138c872E07019Dc9E0a77b284292 |
+| ERC4626RateSource | https://unichain-sepolia.blockscout.com/address/0x341c510298D21C2D0464087C3160e10B37ef88c2 |
+| VernierSwapRouter | https://unichain-sepolia.blockscout.com/address/0xE5C05645Ffcda29616A5981aDc4E3e260Ad442b2 |
+| MockYieldVault | https://unichain-sepolia.blockscout.com/address/0xf8Cf91F9d820374e72caBEA49E0e7bD64d5a9345 |
+
+Re-verify after a redeploy with:
+
+```
+forge verify-contract <address> <path>:<Contract>   --verifier blockscout   --verifier-url https://unichain-sepolia.blockscout.com/api   --constructor-args $(cast abi-encode "constructor(...)" ...)   --compiler-version 0.8.26 --watch
+```
 
 ## Running it
 
