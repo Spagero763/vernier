@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Vernier</title>
+<style>
+  :root {
+    --bg: #05060b;
+    --fg: #f3f5f9;
+    --muted: #8b93a7;
+    --mint: #5eead4;
+    --line: rgba(255,255,255,0.08);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 400 20px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  .deck { height: 100vh; width: 100vw; position: relative; }
+  .slide {
+    position: absolute; inset: 0;
+    display: none;
+    flex-direction: column; justify-content: center;
+    padding: 0 9vw;
+    opacity: 0;
+    transition: opacity .35s ease;
+  }
+  .slide.on { display: flex; opacity: 1; }
+
+  h1 { font-size: clamp(34px, 5.2vw, 74px); font-weight: 600; letter-spacing: -0.025em; line-height: 1.08; }
+  h1 .accent { color: var(--mint); }
+  .sub { margin-top: 26px; font-size: clamp(17px, 1.9vw, 25px); color: var(--muted); max-width: 30ch; line-height: 1.5; }
+
+  table { margin-top: 46px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  td, th { padding: 16px 40px 16px 0; text-align: left; border-bottom: 1px solid var(--line); }
+  th { font-size: 15px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+  td { font-size: clamp(22px, 2.8vw, 40px); font-weight: 600; }
+  td.label { font-size: clamp(16px, 1.7vw, 21px); font-weight: 400; color: var(--muted); }
+  .bad { color: #f87171; }
+  .good { color: var(--mint); }
+
+  .pair { margin-top: 44px; display: flex; gap: 5vw; flex-wrap: wrap; }
+  .pair div { max-width: 26ch; }
+  .pair .k { font-size: 14px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
+  .pair .v { margin-top: 12px; font-size: clamp(17px, 1.8vw, 23px); line-height: 1.45; }
+
+  .num { position: fixed; bottom: 32px; right: 42px; font-size: 14px; color: #333a4d; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="deck">
+
+  <section class="slide on">
+    <h1>Your pool is quoting<br><span class="accent">yesterday's price</span></h1>
+    <p class="sub">A yield-bearing token publishes the rate at which it appreciates. The pool holding it never reads that rate.</p>
+  </section>
+
+  <section class="slide">
+    <h1>Charging for the fix<br>makes it <span class="accent">worse</span></h1>
+    <table>
+      <tr>
+        <th></th>
+        <th>Plain pool</th>
+        <th>Fee equal to the gap</th>
+      </tr>
+      <tr>
+        <td class="label">Correcting trades</td>
+        <td class="good">12</td>
+        <td class="bad">0</td>
+      </tr>
+      <tr>
+        <td class="label">Distance from fair value</td>
+        <td class="good">494</td>
+        <td class="bad">49,070</td>
+      </tr>
+    </table>
+    <p class="sub" style="margin-top:30px">Measured over twelve accrual periods, against traders who only trade when it pays.</p>
+  </section>
+
+  <section class="slide">
+    <h1>Don't charge for the<br>correction. <span class="accent">Perform it.</span></h1>
+    <div class="pair">
+      <div>
+        <div class="k">What it does</div>
+        <div class="v">Multiplies the pool's own price by the factor the token has already published.</div>
+      </div>
+      <div>
+        <div class="k">Why not quote a target</div>
+        <div class="v">A fixed price gets drained the moment the token trades at a discount. Multiplying leaves the market's opinion on the curve.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide">
+    <h1>What guards it</h1>
+    <div class="pair">
+      <div>
+        <div class="k">The rate</div>
+        <div class="v">Can only move as fast as elapsed time allows. A fake spike is clamped, not believed.</div>
+      </div>
+      <div>
+        <div class="k">The operator set</div>
+        <div class="v">EigenLayer operators can flag a rate as untrustworthy. That is all. They cannot set a price.</div>
+      </div>
+    </div>
+    <p class="sub" style="margin-top:40px">Deployed and verified on Unichain Sepolia. 53 tests, including against live v4.</p>
+  </section>
+
+</div>
+<div class="num"></div>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  const num = document.querySelector('.num');
+  let i = 0;
+  const show = n => {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, k) => s.classList.toggle('on', k === i));
+    num.textContent = (i + 1) + ' / ' + slides.length;
+  };
+  addEventListener('keydown', e => {
+    if (['ArrowRight', ' ', 'PageDown', 'Enter'].includes(e.key)) { e.preventDefault(); show(i + 1); }
+    if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+  });
+  addEventListener('click', () => show(i + 1));
+  show(0);
+</script>
+</body>
+</html>
